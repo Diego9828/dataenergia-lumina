@@ -1,0 +1,81 @@
+# Stack de la VM lumina-ops: Kafka (KRaft) + Spark Structured Streaming + replay bajo demanda.
+# Variables (archivo .env que escribe el startup script): PROYECTO, BUCKET_CURATED.
+#   docker compose up -d --build                     # Kafka + streaming
+#   docker compose run --rm replay --proyecto $PROYECTO --desde 2013-01-14 --dias 7
+name: lumina
+
+services:
+  kafka:
+    image: apache/kafka:3.8.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_HEAP_OPTS: -Xms1g -Xmx1g
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      retries: 12
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:3.8.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        for t in meter.readings:8 grid.demand:1 alerts.meter:2 alerts.dr:1; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+            --topic "$${t%%:*}" --partitions "$${t##*:}" --replication-factor 1
+        done
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+
+  spark-streaming:
+    build:
+      context: ../../src/streaming
+      dockerfile: Dockerfile.spark
+    user: root
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master=local[3]
+      - --driver-memory=6g
+      - --packages=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.41.0
+      - --conf=spark.jars.ivy=/ivy
+      - --conf=spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem
+      - --conf=spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS
+      - /app/streaming_job.py
+      - --proyecto=${PROYECTO}
+      - --checkpoints=gs://${BUCKET_CURATED}/checkpoints/streaming
+    volumes:
+      - ivy-cache:/ivy
+    restart: unless-stopped
+
+  replay:
+    build:
+      context: ../../src/streaming
+      dockerfile: Dockerfile.replay
+    profiles: ["replay"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+volumes:
+  kafka-data:
+  ivy-cache:

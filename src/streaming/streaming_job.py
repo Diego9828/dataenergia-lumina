@@ -1,0 +1,257 @@
+"""Lumina · Spark Structured Streaming sobre Kafka.
+
+Consultas (cada una con su checkpoint en GCS):
+  1. anomalias  - lectura vs. perfil del hogar (misma media hora local y tipo de día)
+                  -> lumina_rt.alertas (consumo_anomalo, lectura_negativa) + tópico alerts.meter
+  2. carga_zona - ventanas de 30 min por zona vs. p95 histórico por medidor
+                  -> lumina_rt.carga_zona_30min; picos -> alertas (pico_zona) + tópico alerts.dr
+  3. silencio   - estado por medidor con timeout en tiempo de evento
+                  -> alertas (medidor_silencioso) + tópico alerts.meter
+  4. demanda    - demanda nacional (grid.demand) -> lumina_rt.demanda_red
+
+Uso (dentro del contenedor spark, ver infra/ops/docker-compose.yml):
+  spark-submit streaming_job.py --proyecto P --checkpoints gs://<curated>/checkpoints/streaming
+"""
+from __future__ import annotations
+
+import argparse
+from typing import Iterator
+
+import pandas as pd
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.streaming.state import GroupState, GroupStateTimeout
+from pyspark.sql.types import (DoubleType, LongType, StringType, StructField,
+                               StructType)
+
+ZONA_LONDRES = "Europe/London"
+WATERMARK = "1 hour"                 # tolerancia a lecturas atrasadas (tiempo de evento)
+SILENCIO_MS = 2 * 3600 * 1000        # 4 intervalos sin datos -> medidor silencioso
+FACTOR_P95, SIGMAS, KWH_MINIMO = 2.5, 4.0, 0.3
+
+LECTURA = StructType([StructField("lclid", StringType()), StructField("ts_utc", StringType()),
+                      StructField("kwh", DoubleType())])
+DEMANDA = StructType([StructField("ts_utc", StringType()), StructField("nd_mw", DoubleType()),
+                      StructField("eolica_embebida_mw", DoubleType()),
+                      StructField("solar_embebida_mw", DoubleType())])
+
+
+def argumentos() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument("--proyecto", required=True)
+    p.add_argument("--bootstrap", default="kafka:9092")
+    p.add_argument("--checkpoints", required=True)
+    p.add_argument("--trigger", default="5 seconds")
+    return p.parse_args()
+
+
+class Contexto:
+    def __init__(self, spark: SparkSession, args: argparse.Namespace):
+        self.spark, self.args = spark, args
+        cur = f"{args.proyecto}.lumina_curated"
+        leer = lambda t: spark.read.format("bigquery").option("table", f"{cur}.{t}").load()  # noqa: E731
+        self.hogar = F.broadcast(leer("dim_hogar").select("lclid", "zona", "transformador").cache())
+        self.fechas = F.broadcast(leer("dim_fecha").select("fecha", "tipo_dia").cache())
+        self.perfil = F.broadcast(leer("perfil_hogar").select(
+            "lclid", "tipo_dia", "periodo_local", "kwh_media", "kwh_std", "kwh_p95").cache())
+        self.umbral = F.broadcast(leer("umbral_zona").select(
+            "zona", "tipo_dia", "periodo_local", "kw_p95").cache())
+
+    def tabla(self, nombre: str) -> str:
+        return f"{self.args.proyecto}.lumina_rt.{nombre}"
+
+    def a_bigquery(self, df: DataFrame, tabla: str) -> None:
+        (df.write.format("bigquery").option("writeMethod", "direct")
+           .option("table", self.tabla(tabla)).mode("append").save())
+
+    def a_kafka(self, df: DataFrame, topico: str, clave: str) -> None:
+        (df.select(F.col(clave).cast("string").alias("key"),
+                   F.to_json(F.struct(*df.columns)).alias("value"))
+           .write.format("kafka").option("kafka.bootstrap.servers", self.args.bootstrap)
+           .option("topic", topico).save())
+
+    def kafka(self, topico: str) -> DataFrame:
+        return (self.spark.readStream.format("kafka")
+                .option("kafka.bootstrap.servers", self.args.bootstrap)
+                .option("subscribe", topico)
+                .option("startingOffsets", "latest")
+                .option("maxOffsetsPerTrigger", 200_000)
+                .load())
+
+
+def periodo_local(col_ts: str) -> F.Column:
+    local = F.from_utc_timestamp(col_ts, ZONA_LONDRES)
+    return (F.hour(local) * 2 + F.floor(F.minute(local) / 30) + 1).cast("int")
+
+
+def lecturas(ctx: Contexto) -> DataFrame:
+    return (ctx.kafka("meter.readings")
+            .select(F.from_json(F.col("value").cast("string"), LECTURA).alias("v"),
+                    F.col("timestamp").alias("ts_kafka"))
+            .select("v.*", "ts_kafka")
+            .withColumn("ts_utc", F.to_timestamp("ts_utc"))
+            .where(F.col("lclid").isNotNull() & F.col("ts_utc").isNotNull())
+            .withWatermark("ts_utc", WATERMARK))
+
+
+def columnas_alerta(df: DataFrame, tipo: str | F.Column, valor: str, umbral: str | F.Column) -> DataFrame:
+    return df.select(
+        F.col("ts_utc").alias("ts_evento"),
+        F.to_date("ts_utc").alias("fecha"),
+        (F.lit(tipo) if isinstance(tipo, str) else tipo).alias("tipo"),
+        F.col("lclid").cast("string"),
+        F.col("zona").cast("long"),
+        F.col("transformador").cast("string"),
+        F.col(valor).cast("double").alias("valor"),
+        (F.col(umbral) if isinstance(umbral, str) else umbral).cast("double").alias("umbral"),
+        F.col("ts_kafka").cast("timestamp"),
+        F.current_timestamp().alias("ts_procesado"),
+    )
+
+
+# --------------------------------------------------------------------- 1. anomalías
+def consulta_anomalias(ctx: Contexto, lect: DataFrame):
+    umbral = F.greatest(F.col("kwh_p95") * FACTOR_P95, F.col("kwh_media") + SIGMAS * F.col("kwh_std"),
+                        F.lit(KWH_MINIMO))
+    enriquecidas = (lect.withColumn("fecha", F.to_date("ts_utc"))
+                    .withColumn("periodo_local", periodo_local("ts_utc"))
+                    .join(ctx.fechas, "fecha", "left")
+                    .join(ctx.hogar, "lclid", "left")
+                    .join(ctx.perfil, ["lclid", "tipo_dia", "periodo_local"], "left")
+                    .withColumn("umbral", umbral))
+    alertas = columnas_alerta(
+        enriquecidas.where((F.col("kwh") < 0) | (F.col("kwh") > F.col("umbral"))),
+        F.when(F.col("kwh") < 0, "lectura_negativa").otherwise("consumo_anomalo"), "kwh", "umbral")
+
+    def lote(df: DataFrame, batch_id: int) -> None:
+        if df.isEmpty():
+            return
+        df = df.cache()
+        ctx.a_bigquery(df, "alertas")
+        ctx.a_kafka(df, "alerts.meter", "lclid")
+        print(f"[anomalias] lote {batch_id}: {df.count()} alertas", flush=True)
+        df.unpersist()
+
+    return (alertas.writeStream.foreachBatch(lote).queryName("anomalias")
+            .option("checkpointLocation", f"{ctx.args.checkpoints}/anomalias")
+            .trigger(processingTime=ctx.args.trigger).start())
+
+
+# --------------------------------------------------------------------- 2. carga por zona
+def consulta_carga_zona(ctx: Contexto, lect: DataFrame):
+    carga = (lect.join(ctx.hogar, "lclid", "left")
+             .groupBy(F.window("ts_utc", "30 minutes"), "zona")
+             .agg(F.sum("kwh").alias("kwh_total"), F.count("kwh").alias("n_lecturas"),
+                  F.max("ts_kafka").alias("ts_kafka")))
+
+    def lote(df: DataFrame, batch_id: int) -> None:
+        if df.isEmpty():
+            return
+        res = (df.withColumn("ts_utc", F.col("window.start"))
+               .withColumn("fecha", F.to_date("ts_utc"))
+               .withColumn("periodo_local", periodo_local("ts_utc"))
+               .join(ctx.fechas, "fecha", "left")
+               .join(ctx.umbral, ["zona", "tipo_dia", "periodo_local"], "left")
+               .withColumn("kw_por_medidor", F.col("kwh_total") * 2 / F.col("n_lecturas"))
+               .withColumn("es_pico", F.coalesce(F.col("kw_por_medidor") > F.col("kw_p95"), F.lit(False)))
+               .cache())
+        ctx.a_bigquery(res.select(
+            F.col("ts_utc").alias("ventana_inicio"), "fecha", F.col("zona").cast("long"),
+            "kwh_total", F.col("n_lecturas").cast("long"), "kw_por_medidor", "kw_p95", "es_pico",
+            F.current_timestamp().alias("ts_procesado")), "carga_zona_30min")
+        picos = columnas_alerta(
+            res.where("es_pico").withColumn("lclid", F.lit(None).cast("string"))
+               .withColumn("transformador", F.lit(None).cast("string")),
+            "pico_zona", "kw_por_medidor", "kw_p95")
+        n_picos = picos.count()
+        if n_picos:
+            ctx.a_bigquery(picos, "alertas")
+            ctx.a_kafka(picos, "alerts.dr", "zona")   # señal de respuesta a la demanda
+        print(f"[carga_zona] lote {batch_id}: {res.count()} ventanas, {n_picos} picos", flush=True)
+        res.unpersist()
+
+    return (carga.writeStream.foreachBatch(lote).queryName("carga_zona").outputMode("append")
+            .option("checkpointLocation", f"{ctx.args.checkpoints}/carga_zona")
+            .trigger(processingTime=ctx.args.trigger).start())
+
+
+# --------------------------------------------------------------------- 3. medidores silenciosos
+SALIDA_SILENCIO = StructType([StructField("lclid", StringType()), StructField("ultima_ms", LongType())])
+ESTADO_SILENCIO = StructType([StructField("ultima_ms", LongType())])
+
+
+def detectar_silencio(clave: tuple, lotes: Iterator[pd.DataFrame], estado: GroupState) -> Iterator[pd.DataFrame]:
+    if estado.hasTimedOut:
+        (ultima,) = estado.get
+        estado.remove()
+        yield pd.DataFrame({"lclid": [clave[0]], "ultima_ms": [ultima]})
+        return
+    ultima = max(int(pdf["ts_ms"].max()) for pdf in lotes)
+    if estado.exists:
+        ultima = max(ultima, estado.get[0])
+    estado.update((ultima,))
+    estado.setTimeoutTimestamp(ultima + SILENCIO_MS)
+
+
+def consulta_silencio(ctx: Contexto, lect: DataFrame):
+    silencios = (lect.select("lclid", "ts_utc", (F.col("ts_utc").cast("double") * 1000).cast("long").alias("ts_ms"))
+                 .groupBy("lclid")
+                 .applyInPandasWithState(detectar_silencio, SALIDA_SILENCIO, ESTADO_SILENCIO,
+                                         "append", GroupStateTimeout.EventTimeTimeout))
+
+    def lote(df: DataFrame, batch_id: int) -> None:
+        if df.isEmpty():
+            return
+        res = columnas_alerta(
+            df.withColumn("ts_utc", (F.col("ultima_ms") / 1000).cast("timestamp"))
+              .withColumn("horas", F.lit(SILENCIO_MS / 3_600_000))
+              .withColumn("ts_kafka", F.lit(None).cast("timestamp"))
+              .join(ctx.hogar, "lclid", "left"),
+            "medidor_silencioso", "horas", F.lit(SILENCIO_MS / 3_600_000)).cache()
+        ctx.a_bigquery(res, "alertas")
+        ctx.a_kafka(res, "alerts.meter", "lclid")
+        print(f"[silencio] lote {batch_id}: {res.count()} medidores silenciosos", flush=True)
+        res.unpersist()
+
+    return (silencios.writeStream.foreachBatch(lote).queryName("silencio").outputMode("append")
+            .option("checkpointLocation", f"{ctx.args.checkpoints}/silencio")
+            .trigger(processingTime=ctx.args.trigger).start())
+
+
+# --------------------------------------------------------------------- 4. demanda nacional
+def consulta_demanda(ctx: Contexto):
+    demanda = (ctx.kafka("grid.demand")
+               .select(F.from_json(F.col("value").cast("string"), DEMANDA).alias("v")).select("v.*")
+               .withColumn("ts_utc", F.to_timestamp("ts_utc"))
+               .withColumn("fecha", F.to_date("ts_utc"))
+               .withColumn("ts_procesado", F.current_timestamp()))
+
+    def lote(df: DataFrame, batch_id: int) -> None:
+        if not df.isEmpty():
+            ctx.a_bigquery(df.select("ts_utc", "fecha", "nd_mw", "eolica_embebida_mw",
+                                     "solar_embebida_mw", "ts_procesado"), "demanda_red")
+
+    return (demanda.writeStream.foreachBatch(lote).queryName("demanda")
+            .option("checkpointLocation", f"{ctx.args.checkpoints}/demanda")
+            .trigger(processingTime=ctx.args.trigger).start())
+
+
+def main() -> None:
+    args = argumentos()
+    spark = (SparkSession.builder.appName("lumina-streaming")
+             .config("spark.sql.session.timeZone", "UTC")
+             .config("spark.sql.shuffle.partitions", 8)
+             .config("spark.sql.streaming.stateStore.providerClass",
+                     "org.apache.spark.sql.execution.streaming.state.RocksDBStateStoreProvider")
+             .getOrCreate())
+    spark.sparkContext.setLogLevel("WARN")
+    ctx = Contexto(spark, args)
+    lect = lecturas(ctx)
+    consultas = [consulta_anomalias(ctx, lect), consulta_carga_zona(ctx, lect),
+                 consulta_silencio(ctx, lect), consulta_demanda(ctx)]
+    print(f"[lumina] {len(consultas)} consultas activas: {[q.name for q in consultas]}", flush=True)
+    spark.streams.awaitAnyTermination()
+
+
+if __name__ == "__main__":
+    main()
