@@ -1,4 +1,4 @@
-"""Lumina · Spark Structured Streaming sobre Kafka.
+"""Lumina · Spark Structured Streaming sobre Kafka (capa de velocidad de la arquitectura Lambda).
 
 Consultas (cada una con su checkpoint en GCS):
   1. anomalias  - lectura vs. perfil del hogar (misma media hora local y tipo de día)
@@ -8,13 +8,21 @@ Consultas (cada una con su checkpoint en GCS):
   3. silencio   - estado por medidor con timeout en tiempo de evento
                   -> alertas (medidor_silencioso) + tópico alerts.meter
   4. demanda    - demanda nacional (grid.demand) -> lumina_rt.demanda_red
+  5. bronze     - sincronización 1: copia cruda de cada lectura a gs://<raw>/streaming/lecturas
+                  (Parquet por fecha, exactly-once); el batch nocturno la consolida en curated
+
+Sincronización 2: perfiles y umbrales vienen del batch (lumina_curated) y se recargan cada
+--refresco-horas dentro de los micro-lotes, para que el streaming use lo último que aprendió el batch.
 
 Uso (dentro del contenedor spark, ver infra/ops/docker-compose.yml):
-  spark-submit streaming_job.py --proyecto P --checkpoints gs://<curated>/checkpoints/streaming
+  spark-submit streaming_job.py --proyecto P --checkpoints gs://<curated>/checkpoints/streaming \
+      --bronze gs://<raw>/streaming/lecturas
 """
 from __future__ import annotations
 
 import argparse
+import threading
+import time
 from typing import Iterator
 
 import pandas as pd
@@ -42,21 +50,61 @@ def argumentos() -> argparse.Namespace:
     p.add_argument("--proyecto", required=True)
     p.add_argument("--bootstrap", default="kafka:9092")
     p.add_argument("--checkpoints", required=True)
+    p.add_argument("--bronze", default="", help="Destino de la copia cruda (vacío = no se escribe)")
+    p.add_argument("--refresco-horas", type=float, default=24.0,
+                   help="Cada cuántas horas se recargan perfiles y umbrales del batch")
     p.add_argument("--trigger", default="5 seconds")
     return p.parse_args()
 
 
 class Contexto:
+    """Conexiones y tablas de referencia. Las reglas del batch se recargan cada `refresco-horas`."""
+
     def __init__(self, spark: SparkSession, args: argparse.Namespace):
         self.spark, self.args = spark, args
-        cur = f"{args.proyecto}.lumina_curated"
-        leer = lambda t: spark.read.format("bigquery").option("table", f"{cur}.{t}").load()  # noqa: E731
-        self.hogar = F.broadcast(leer("dim_hogar").select("lclid", "zona", "transformador").cache())
-        self.fechas = F.broadcast(leer("dim_fecha").select("fecha", "tipo_dia", "estacion").cache())
-        self.perfil = F.broadcast(leer("perfil_hogar").select(
-            "lclid", "tipo_dia", "periodo_local", "kwh_media", "kwh_std", "kwh_p95").cache())
-        self.umbral = F.broadcast(leer("umbral_zona").select(
-            "zona", "tipo_dia", "estacion", "periodo_local", "kw_p95").cache())
+        self._lock = threading.Lock()
+        self._cargado_en = 0.0
+        # dim_hogar se usa también dentro del plan de streaming (carga_zona agrupa por zona);
+        # esa copia queda fija hasta reiniciar el job (los hogares casi no cambian).
+        self.hogar_stream = F.broadcast(self._leer("dim_hogar").select("lclid", "zona", "transformador").cache())
+        self._cargar_reglas()
+
+    def _leer(self, tabla: str) -> DataFrame:
+        return (self.spark.read.format("bigquery")
+                .option("table", f"{self.args.proyecto}.lumina_curated.{tabla}").load())
+
+    def _cargar_reglas(self) -> None:
+        nuevas = {
+            "hogar": self._leer("dim_hogar").select("lclid", "zona", "transformador"),
+            "fechas": self._leer("dim_fecha").select("fecha", "tipo_dia", "estacion"),
+            "perfil": self._leer("perfil_hogar").select(
+                "lclid", "tipo_dia", "periodo_local", "kwh_media", "kwh_std", "kwh_p95"),
+            "umbral": self._leer("umbral_zona").select("zona", "tipo_dia", "estacion", "periodo_local", "kw_p95"),
+        }
+        filas = {}
+        for nombre, df in nuevas.items():
+            df = df.cache()
+            filas[nombre] = df.count()          # materializa antes de reemplazar la versión anterior
+            anterior = getattr(self, f"_{nombre}", None)
+            setattr(self, f"_{nombre}", df)
+            if anterior is not None:
+                anterior.unpersist()
+        self._cargado_en = time.time()
+        print(f"[lumina] reglas del batch cargadas: {filas}", flush=True)
+
+    def refrescar(self) -> None:
+        """Sincronización 2: recarga perfiles y umbrales si pasó el intervalo (seguro entre consultas)."""
+        if time.time() - self._cargado_en < self.args.refresco_horas * 3600:
+            return
+        with self._lock:
+            if time.time() - self._cargado_en >= self.args.refresco_horas * 3600:
+                self._cargar_reglas()
+
+    # Las tablas de referencia se usan dentro de foreachBatch, así cada micro-lote ve la versión vigente.
+    hogar = property(lambda self: F.broadcast(self._hogar))
+    fechas = property(lambda self: F.broadcast(self._fechas))
+    perfil = property(lambda self: F.broadcast(self._perfil))
+    umbral = property(lambda self: F.broadcast(self._umbral))
 
     def tabla(self, nombre: str) -> str:
         return f"{self.args.proyecto}.lumina_rt.{nombre}"
@@ -114,38 +162,41 @@ def columnas_alerta(df: DataFrame, tipo: str | F.Column, valor: str, umbral: str
 def consulta_anomalias(ctx: Contexto, lect: DataFrame):
     umbral = F.greatest(F.col("kwh_p95") * FACTOR_P95, F.col("kwh_media") + SIGMAS * F.col("kwh_std"),
                         F.lit(KWH_MINIMO))
-    enriquecidas = (lect.withColumn("fecha", F.to_date("ts_utc"))
-                    .withColumn("periodo_local", periodo_local("ts_utc"))
-                    .join(ctx.fechas, "fecha", "left")
-                    .join(ctx.hogar, "lclid", "left")
-                    .join(ctx.perfil, ["lclid", "tipo_dia", "periodo_local"], "left")
-                    .withColumn("umbral", umbral))
-    alertas = columnas_alerta(
-        enriquecidas.where((F.col("kwh") < 0) | (F.col("kwh") > F.col("umbral"))),
-        F.when(F.col("kwh") < 0, "lectura_negativa").otherwise("consumo_anomalo"), "kwh", "umbral")
+    base = (lect.withColumn("fecha", F.to_date("ts_utc"))
+            .withColumn("periodo_local", periodo_local("ts_utc")))
 
     def lote(df: DataFrame, batch_id: int) -> None:
+        ctx.refrescar()
         if df.isEmpty():
             return
-        df = df.cache()
-        ctx.a_bigquery(df, "alertas")
-        ctx.a_kafka(df, "alerts.meter", "lclid")
-        print(f"[anomalias] lote {batch_id}: {df.count()} alertas", flush=True)
-        df.unpersist()
+        alertas = columnas_alerta(
+            df.join(ctx.fechas, "fecha", "left")
+              .join(ctx.hogar, "lclid", "left")
+              .join(ctx.perfil, ["lclid", "tipo_dia", "periodo_local"], "left")
+              .withColumn("umbral", umbral)
+              .where((F.col("kwh") < 0) | (F.col("kwh") > F.col("umbral"))),
+            F.when(F.col("kwh") < 0, "lectura_negativa").otherwise("consumo_anomalo"), "kwh", "umbral").cache()
+        n = alertas.count()
+        if n:
+            ctx.a_bigquery(alertas, "alertas")
+            ctx.a_kafka(alertas, "alerts.meter", "lclid")
+        print(f"[anomalias] lote {batch_id}: {n} alertas", flush=True)
+        alertas.unpersist()
 
-    return (alertas.writeStream.foreachBatch(lote).queryName("anomalias")
+    return (base.writeStream.foreachBatch(lote).queryName("anomalias")
             .option("checkpointLocation", f"{ctx.args.checkpoints}/anomalias")
             .trigger(processingTime=ctx.args.trigger).start())
 
 
 # --------------------------------------------------------------------- 2. carga por zona
 def consulta_carga_zona(ctx: Contexto, lect: DataFrame):
-    carga = (lect.join(ctx.hogar, "lclid", "left")
+    carga = (lect.join(ctx.hogar_stream, "lclid", "left")
              .groupBy(F.window("ts_utc", "30 minutes"), "zona")
              .agg(F.sum("kwh").alias("kwh_total"), F.count("kwh").alias("n_lecturas"),
                   F.max("ts_kafka").alias("ts_kafka")))
 
     def lote(df: DataFrame, batch_id: int) -> None:
+        ctx.refrescar()
         if df.isEmpty():
             return
         res = (df.withColumn("ts_utc", F.col("window.start"))
@@ -240,6 +291,25 @@ def consulta_demanda(ctx: Contexto):
             .trigger(processingTime=ctx.args.trigger).start())
 
 
+# --------------------------------------------------------------------- 5. bronze (sincronización 1)
+def consulta_bronze(ctx: Contexto):
+    """Copia cruda de cada lectura tal como llegó a Kafka; el file sink de Spark es exactly-once."""
+    crudo = (ctx.kafka("meter.readings")
+             .select(F.col("value").cast("string").alias("valor_json"),
+                     F.col("topic").alias("topico"), F.col("partition").alias("particion"),
+                     F.col("offset"), F.col("timestamp").alias("ts_kafka"))
+             .withColumn("v", F.from_json("valor_json", LECTURA))
+             .select(F.col("v.lclid").alias("lclid"), F.col("v.ts_utc").alias("ts_utc"),
+                     F.col("v.kwh").alias("kwh"), "valor_json", "topico", "particion", "offset", "ts_kafka")
+             .withColumn("fecha", F.to_date(F.substring("ts_utc", 1, 10))))
+    return (crudo.writeStream.format("parquet").queryName("bronze")
+            .option("path", ctx.args.bronze)
+            .option("checkpointLocation", f"{ctx.args.checkpoints}/bronze")
+            .partitionBy("fecha")
+            .trigger(processingTime="1 minute")     # archivos más grandes y menos numerosos
+            .start())
+
+
 def main() -> None:
     args = argumentos()
     spark = (SparkSession.builder.appName("lumina-streaming")
@@ -253,6 +323,8 @@ def main() -> None:
     lect = lecturas(ctx)
     consultas = [consulta_anomalias(ctx, lect), consulta_carga_zona(ctx, lect),
                  consulta_silencio(ctx, lect), consulta_demanda(ctx)]
+    if args.bronze:
+        consultas.append(consulta_bronze(ctx))
     print(f"[lumina] {len(consultas)} consultas activas: {[q.name for q in consultas]}", flush=True)
     spark.streams.awaitAnyTermination()
 

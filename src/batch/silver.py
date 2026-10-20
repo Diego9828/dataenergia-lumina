@@ -2,9 +2,11 @@
 
 Uso:
   spark-submit silver.py --entrada gs://<p>-lumina-raw/kaggle --salida gs://<p>-lumina-curated/silver
-  (--muestra-bloques 2 para una prueba barata)
+  (--muestra-bloques 2 para una prueba barata; --entrada-streaming gs://<p>-lumina-raw/streaming/lecturas
+   suma lo que el streaming guardó en bronze)
 Reglas de limpieza documentadas en docs/02_modelo_datos.md.
 """
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType
@@ -18,11 +20,28 @@ def csv(spark: SparkSession, ruta: str, **opciones) -> DataFrame:
     return spark.read.option("header", True).options(**opciones).csv(ruta)
 
 
-def lecturas_30min(spark: SparkSession, entrada: str, muestra: int) -> DataFrame:
+def bronze_streaming(spark: SparkSession, ruta: str) -> DataFrame | None:
+    """Sincronización 1: lecturas que el streaming copió a bronze, con las columnas del CSV de Kaggle."""
+    if not ruta:
+        return None
+    try:
+        df = spark.read.parquet(ruta)       # respeta _spark_metadata: solo archivos confirmados
+    except AnalysisException:
+        print(f"[lumina] {ruta}: aún no existe, se omite", flush=True)
+        return None
+    return df.select("lclid", F.col("ts_utc").alias("tstp"), F.col("kwh").cast("string").alias("kwh_txt"))
+
+
+def lecturas_30min(spark: SparkSession, entrada: str, muestra: int, entrada_streaming: str = "") -> DataFrame:
     base = f"{entrada}/smart_meters_london/halfhourly_dataset/halfhourly_dataset"
     rutas = [f"{base}/block_{i}.csv" for i in range(muestra)] if muestra else [f"{base}/block_*.csv"]
     esquema = StructType([StructField(c, StringType()) for c in ("lclid", "tstp", "kwh_txt")])
     df = spark.read.option("header", True).schema(esquema).csv(rutas)
+    streaming = bronze_streaming(spark, entrada_streaming)
+    if streaming is not None:
+        # Misma limpieza para ambas fuentes; los duplicados (lclid, ts_utc) se eliminan abajo.
+        # Las filas del streaming quedan con bloque nulo (no vienen de un block_N.csv).
+        df = df.unionByName(streaming)
 
     kwh_txt = F.trim("kwh_txt")
     ts = F.to_timestamp(F.substring("tstp", 1, 19), "yyyy-MM-dd HH:mm:ss")
@@ -145,7 +164,7 @@ def main() -> None:
     escribir(clima_dia(spark, e), f"{s}/clima_dia", archivos=1)
     escribir(demanda_nacional(spark, e), f"{s}/demanda_nacional_30min", archivos=1)
     # ~28 meses -> un archivo por mes (60-120 MB c/u con la data completa)
-    escribir(lecturas_30min(spark, e, args.muestra_bloques), f"{s}/lecturas_30min",
+    escribir(lecturas_30min(spark, e, args.muestra_bloques, args.entrada_streaming), f"{s}/lecturas_30min",
              particion="anio_mes", archivos=32)
     spark.stop()
 

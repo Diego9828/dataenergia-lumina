@@ -45,8 +45,8 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 
 ### Sincronización batch ↔ streaming (arquitectura Lambda)
 - ✅ Patrón definido y documentado (Lambda, no Kappa), con diagrama → [arquitectura_tecnica.md](arquitectura_tecnica.md#batch-y-streaming-arquitectura-lambda)
-- ⬜ 1 · Lectura en vivo → bronze: consulta `bronze` en `streaming_job.py`
-- 🟡 2 · Perfiles y umbrales → streaming: se cargan al arrancar; falta recargarlos cada día
+- 🟡 1 · Lectura en vivo → bronze: consulta `bronze` en `streaming_job.py` y consolidación en `silver.py` implementadas; falta probarlas en vivo
+- 🟡 2 · Perfiles y umbrales → streaming: recarga cada 24 h (`Contexto.refrescar()`) implementada; falta probarla en vivo
 - ⬜ 3 · Vistas que unen historia (`curated`) y hoy (`rt`) en `lumina_olap` (Fase 4)
 - ⬜ 4 · Reconciliación: de `rt` solo lo posterior al último batch; manda el batch (Fase 4)
 
@@ -72,3 +72,4 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ✅ Apagado: `infra/shutdown.sh`, `07_vm_ops.sh destruir`, horario 23:00, `teardown.sh`
 - ✅ Bitácora de costos → [bitacora_costos.log](bitacora_costos.log)
 - ✅ Arquitectura técnica (script → dónde corre → para qué) → [arquitectura_tecnica.md](arquitectura_tecnica.md)
+- ✅ Ejemplo dummy del flujo de datos, ejecutable con pandas → `notebooks/flujo_dummy.py`

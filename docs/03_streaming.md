@@ -26,6 +26,9 @@ Todo corre en la VM `lumina-ops` (e2-standard-4) con Docker Compose: Kafka 3.8 e
 | `carga_zona` | Ventana fija de 30 min por zona con *watermark* de 1 h. Pico si el kW por medidor supera el p95 histórico de la misma zona, estación, tipo de día y media hora, **solo en hora punta (17–21 h)** | `carga_zona_30min`; picos a `alertas` (`pico_zona`) + tópico `alerts.dr` (señal de respuesta a la demanda) |
 | `silencio` | Estado por medidor (`applyInPandasWithState`) con *timeout* en tiempo de evento: 2 h (4 intervalos) sin lecturas | `alertas` (`medidor_silencioso`) + `alerts.meter` |
 | `demanda` | Paso directo de la demanda nacional | `demanda_red` |
+| `bronze` | **Sincronización 1:** copia cruda de cada lectura (JSON original, tópico, partición, offset) en Parquet por fecha; *file sink* exactly-once, cada 1 min | `gs://<raw>/streaming/lecturas/` → lo consolida `silver.py` |
+
+**Sincronización 2:** `perfil_hogar`, `umbral_zona`, `dim_hogar` y `dim_fecha` se leen de `lumina_curated` y se recargan cada `--refresco-horas` (24) dentro de los micro-lotes; por eso los cruces con esas tablas se hacen en `foreachBatch` y no en el plan del stream (que las dejaría fijas al arrancar).
 
 Las escrituras a BigQuery usan la Storage Write API (conector `spark-bigquery`, `writeMethod=direct`). Cada consulta guarda su progreso en `gs://<curated>/checkpoints/streaming/<consulta>`: si el proceso cae, Docker lo reinicia y continúa desde el último offset confirmado.
 

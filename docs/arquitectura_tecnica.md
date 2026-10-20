@@ -35,8 +35,8 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 
 | # | Qué se sincroniza | Cómo | Dónde | Estado |
 |---|---|---|---|---|
-| 1 | Lectura en vivo → historia | `streaming_job.py` guarda cada lectura en `raw/streaming/` (bronze) además de evaluarla; el batch de la noche la consolida en `curated` | Consulta `bronze` en `streaming_job.py` | ⬜ En el taller el replay lee de gold y no escribe bronze |
-| 2 | Lo aprendido → streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming | `streaming_job.py` (clase `Contexto`) | 🟡 Se cargan al arrancar el job; falta recargarlos cada día tras el batch |
+| 1 | Lectura en vivo → historia | `streaming_job.py` guarda cada lectura en `raw/streaming/` (bronze) además de evaluarla; el batch de la noche la consolida en `curated` | Consulta `bronze` en `streaming_job.py` (file sink Parquet por fecha, exactly-once); `silver.py --entrada-streaming` lo consolida | 🟡 Implementado; falta probarlo en vivo |
+| 2 | Lo aprendido → streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming | `streaming_job.py`: `Contexto.refrescar()` en cada micro-lote, cada `--refresco-horas` (24) | 🟡 Implementado; falta probarlo en vivo |
 | 3 | Historia + hoy → consumo | Vistas que unen `lumina_curated` (hasta ayer) con `lumina_rt` (hoy) | `lumina_olap` (Fase 4) | ⬜ |
 | 4 | Dato provisional → definitivo | Las vistas toman de `lumina_rt` solo lo posterior a lo último que procesó el batch; **si hay diferencia, manda el batch** (incorpora lecturas atrasadas y correcciones) | Regla en las vistas `lumina_olap` | ⬜ |
 
@@ -58,7 +58,7 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 | `infra/04_ingesta_kaggle.sh` | Laptop | Una vez | Crea la VM efímera, espera y la borra | — | VM `lumina-ingest` |
 | `src/ingestion/kaggle_to_gcs.sh` | VM `lumina-ingest` (startup script) | Una vez | Descarga los datasets de Kaggle | Kaggle, Secret Manager | `raw/kaggle/` |
 | `infra/05_spark_batch.sh` | Laptop | Manual | Sube el código y envía `silver` o `gold`; registra el costo | `src/batch/` | Spark serverless, `bitacora_costos.log` |
-| `src/batch/silver.py` | Managed Spark serverless | Por corrida batch | Tipado, UTC, banderas de calidad | `raw/kaggle/` | `curated/silver/` |
+| `src/batch/silver.py` | Managed Spark serverless | Por corrida batch | Tipado, UTC, banderas de calidad; consolida Kaggle y lo que guardó el streaming | `raw/kaggle/`, `raw/streaming/` | `curated/silver/` |
 | `src/batch/gold.py` | Managed Spark serverless | Por corrida batch | Modelo estrella, agregados, perfiles, `dq_medidor` | `curated/silver/` | `curated/gold/` |
 | `src/batch/lumina_common.py` | Spark serverless (dependencia) | — | Sesión Spark, argumentos, escritura de Parquet | — | — |
 | `infra/06_cargar_bigquery.sh` | Laptop | Manual | Carga gold en BigQuery y crea las tablas derivadas | `curated/gold/`, `src/sql/gold_derivadas.sql` | `lumina_curated` |
@@ -68,7 +68,7 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 | `infra/ops/vm_startup.sh` | VM `lumina-ops` (cada arranque) | Al encender | Instala Docker, baja el código y levanta los perfiles | `curated/_ops/bundle.tgz` | Contenedores |
 | `infra/ops/docker-compose.yml` | VM `lumina-ops` | Al encender | Define Kafka, Spark Streaming, replay, Airflow y Postgres | — | — |
 | `src/streaming/replay_producer.py` | VM `lumina-ops`, contenedor `replay` | Por demo | Reproduce lecturas de 2013 como eventos; inyecta fallas | `lumina_curated` | Kafka `meter.readings`, `grid.demand` |
-| `src/streaming/streaming_job.py` | VM `lumina-ops`, contenedor `spark-streaming` (perfil `streaming`) | Continuo mientras la VM está encendida | Anomalías, picos por zona, medidores silenciosos, demanda | Kafka, `lumina_curated` | `lumina_rt`, Kafka `alerts.*`, checkpoints en GCS |
+| `src/streaming/streaming_job.py` | VM `lumina-ops`, contenedor `spark-streaming` (perfil `streaming`) | Continuo mientras la VM está encendida | Anomalías, picos por zona, medidores silenciosos, demanda; copia cruda a bronze; recarga reglas cada 24 h | Kafka, `lumina_curated` | `lumina_rt`, `raw/streaming/`, Kafka `alerts.*`, checkpoints en GCS |
 | `src/sql/streaming_tablas.sql` | BigQuery | Una vez | Crea las tablas de salida del streaming | — | `lumina_rt` |
 | `src/costos/calculadora_consumo.py` | Laptop | Al cambiar supuestos | Costo del primer año en producción | Supuestos del script | `docs/entrega1/calculadora_consumo.md` |
 | `infra/shutdown.sh` / `infra/teardown.sh` | Laptop | Fin de sesión / fin de curso | Apaga lo que cobra por hora / borra todo | — | — |

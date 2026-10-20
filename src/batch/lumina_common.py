@@ -26,6 +26,8 @@ def parse_args(description: str) -> argparse.Namespace:
     p.add_argument("--salida", required=True, help="Prefijo de salida (gs://... o ruta local)")
     p.add_argument("--muestra-bloques", type=int, default=0,
                    help="Procesa solo los N primeros bloques de medidores (0 = todos)")
+    p.add_argument("--entrada-streaming", default="",
+                   help="Bronze escrito por el streaming (gs://<raw>/streaming/lecturas); vacío = no se usa")
     return p.parse_args()
 
 

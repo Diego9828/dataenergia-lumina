@@ -27,7 +27,9 @@ if [[ "$MUESTRA" == "--muestra" ]]; then
   EXTRA=(--muestra-bloques 2)
 fi
 case "$JOB" in
-  silver) ENTRADA="gs://$BUCKET_RAW/kaggle"; SALIDA="$PREFIJO/silver" ;;
+  silver) ENTRADA="gs://$BUCKET_RAW/kaggle"; SALIDA="$PREFIJO/silver"
+          # Sincronización 1: en la corrida completa se consolida lo que el streaming guardó en bronze
+          [[ "$MUESTRA" == "--muestra" ]] || EXTRA=(--entrada-streaming "gs://$BUCKET_RAW/streaming/lecturas") ;;
   gold)   ENTRADA="$PREFIJO/silver";          SALIDA="$PREFIJO/gold" ;;
 esac
 

@@ -2,6 +2,7 @@
 
 Orquesta los mismos jobs y SQL que los scripts de infra/ (05_spark_batch.sh, 06_cargar_bigquery.sh):
   verificar_raw -> spark_silver -> spark_gold -> cargas BigQuery -> tablas derivadas -> controles de calidad
+Silver consolida también raw/streaming (lo que guardó la capa de velocidad: sincronización 1).
 
 Parámetro `muestra` (al disparar): procesa 2 bloques de medidores, escribe en
 gs://<curated>/muestra y carga en el dataset lumina_muestra (~US$0.16). Sin él, todo el histórico
@@ -39,6 +40,8 @@ SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
 DATASET = "{{ 'lumina_muestra' if params.muestra else 'lumina_curated' }}"
 PREFIJO = f"gs://{BUCKET_CURATED}{{{{ '/muestra' if params.muestra else '' }}}}"
 BLOQUES = "{{ 2 if params.muestra else 0 }}"
+# Sincronización 1: silver consolida el bronze del streaming (no en modo muestra)
+BRONZE_STREAMING = f"{{{{ '' if params.muestra else 'gs://{BUCKET_RAW}/streaming/lecturas' }}}}"
 TABLA = f"`{PROYECTO}.{DATASET}." + "{}`"
 
 # Tablas gold que se cargan y su particionado/clustering en BigQuery
@@ -55,12 +58,12 @@ CARGAS: dict[str, dict] = {
 }
 
 
-def batch_spark(job: str, entrada: str, salida: str) -> dict:
+def batch_spark(job: str, entrada: str, salida: str, extra: list[str] | None = None) -> dict:
     return {
         "pyspark_batch": {
             "main_python_file_uri": f"{CODIGO}/{job}.py",
             "python_file_uris": [f"{CODIGO}/lumina_common.py"],
-            "args": ["--entrada", entrada, "--salida", salida, "--muestra-bloques", BLOQUES],
+            "args": ["--entrada", entrada, "--salida", salida, "--muestra-bloques", BLOQUES, *(extra or [])],
         },
         "runtime_config": {
             "version": "2.2",
@@ -111,7 +114,8 @@ with DAG(
     silver = DataprocCreateBatchOperator(
         task_id="spark_silver", project_id=PROYECTO, region=REGION,
         batch_id="lumina-af-silver-{{ ts_nodash | lower }}",
-        batch=batch_spark("silver", f"gs://{BUCKET_RAW}/kaggle", f"{PREFIJO}/silver"))
+        batch=batch_spark("silver", f"gs://{BUCKET_RAW}/kaggle", f"{PREFIJO}/silver",
+                          ["--entrada-streaming", BRONZE_STREAMING]))
 
     gold = DataprocCreateBatchOperator(
         task_id="spark_gold", project_id=PROYECTO, region=REGION,
