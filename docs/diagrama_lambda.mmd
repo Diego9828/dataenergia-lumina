@@ -6,30 +6,30 @@ flowchart LR
 
   K["Apache Kafka<br/>meter.readings<br/>puerta única de entrada"]
 
-  subgraph BATCH["Capa batch · verdad histórica"]
+  subgraph BATCH["Capa batch"]
     B1[("Bronze en GCS<br/>lecturas crudas")]
     B2["Spark batch<br/>silver.py · gold.py<br/>cada noche"]
     B3[("BigQuery lumina_curated<br/>historia hasta ayer,<br/>perfiles, umbrales")]
   end
 
-  subgraph SPEED["Capa de velocidad · lo de hoy"]
+  subgraph SPEED["Capa de velocidad"]
     S1["Spark Streaming<br/>streaming_job.py<br/>en segundos"]
-    S2[("BigQuery lumina_rt<br/>alertas, carga de hoy<br/>dato provisional")]
+    S2[("BigQuery lumina_rt · TABLAS<br/>alertas, carga de hoy<br/>dato provisional")]
   end
 
   subgraph SERVE["Capa de servicio"]
-    V["Vistas lumina_olap<br/>4 · regla: hasta ayer del batch,<br/>hoy del streaming;<br/>si difieren, manda el batch"]
+    V["Vistas lumina_olap · CONSULTAS<br/>4 · regla: hasta ayer del batch,<br/>hoy del streaming;<br/>si difieren, manda el batch"]
     API["API Cloud Run<br/>Looker Studio"]
   end
 
   M --> K
   O --> B1
-  K -->|"1 · DATOS: cada lectura en vivo<br/>se copia a bronze"| B1
   K --> S1
+  S1 -->|"1 · DATOS a bronze"| B1
   B1 --> B2
   B2 --> B3
   B3 -.->|"2 · REGLAS, no datos:<br/>perfiles y umbrales,<br/>se recargan cada día"| S1
-  S1 --> S2
+  S1 -->|"guarda alertas y carga"| S2
   B3 -->|"3 · definitivo"| V
   S2 -->|"3 · provisional"| V
   V --> API

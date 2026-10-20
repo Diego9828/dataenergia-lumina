@@ -54,7 +54,7 @@ La arquitectura sigue el patrón **Lambda**: una **capa batch** que guarda la ve
 
 | # | Sincronización | Mecanismo |
 |---|---|---|
-| 1 | La lectura en vivo pasa a la historia | Kafka Connect copia cada evento a bronze; el batch nocturno la procesa |
+| 1 | La lectura en vivo pasa a la historia | El job de streaming guarda cada lectura en bronze (además de evaluarla); el batch nocturno la consolida en `curated` |
 | 2 | Lo aprendido llega al streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming; se recargan cada día |
 | 3 | Una sola vista para el consumo | Las vistas `lumina_olap` unen `curated` (hasta ayer) con `rt` (hoy) |
 | 4 | El dato provisional se vuelve definitivo | De `rt` solo se toma lo posterior al último batch; si hay diferencia, manda el batch, que incorpora lecturas atrasadas |

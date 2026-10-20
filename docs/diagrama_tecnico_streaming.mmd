@@ -9,7 +9,8 @@ flowchart LR
     SS["src/streaming/<br/>streaming_job.py<br/>anomalías · picos por zona<br/>medidores silenciosos · demanda"]
   end
 
-  BQR[("BigQuery lumina_rt<br/>alertas · carga_zona_30min<br/>demanda_red")]
+  BQR[("BigQuery lumina_rt · tablas<br/>alertas · carga_zona_30min<br/>demanda_red")]
+  BRZ[("GCS raw/streaming/<br/>lecturas crudas por fecha<br/>las consolida el batch")]
   CKP[("GCS curated/<br/>checkpoints/streaming")]
 
   L7 -->|crea y opera| OPS
@@ -18,6 +19,7 @@ flowchart LR
   KF --> SS
   BQC -.->|perfiles y umbrales| SS
   SS -->|Storage Write API| BQR
+  SS -->|1 · cada lectura| BRZ
   SS -->|señales DR y alertas| KF
   SS -.->|offsets y estado| CKP
 
@@ -26,5 +28,5 @@ flowchart LR
   classDef store fill:#FFF4E0,stroke:#D98E04,color:#3A2600
   class L7 lap
   class RP,KF,SS rt
-  class BQC,BQR,CKP store
+  class BQC,BQR,CKP,BRZ store
   style OPS fill:#FFF8F8,stroke:#E8A3A3

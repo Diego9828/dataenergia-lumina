@@ -35,7 +35,7 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 
 | # | Qué se sincroniza | Cómo | Dónde | Estado |
 |---|---|---|---|---|
-| 1 | Lectura en vivo → historia | Cada lectura que entra a Kafka se copia a bronze; el batch de la noche la procesa | Producción: Kafka Connect (sink a GCS). Taller: consulta `bronze` en `streaming_job.py` | ⬜ En el taller el replay lee de gold y no escribe bronze |
+| 1 | Lectura en vivo → historia | `streaming_job.py` guarda cada lectura en `raw/streaming/` (bronze) además de evaluarla; el batch de la noche la consolida en `curated` | Consulta `bronze` en `streaming_job.py` | ⬜ En el taller el replay lee de gold y no escribe bronze |
 | 2 | Lo aprendido → streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming | `streaming_job.py` (clase `Contexto`) | 🟡 Se cargan al arrancar el job; falta recargarlos cada día tras el batch |
 | 3 | Historia + hoy → consumo | Vistas que unen `lumina_curated` (hasta ayer) con `lumina_rt` (hoy) | `lumina_olap` (Fase 4) | ⬜ |
 | 4 | Dato provisional → definitivo | Las vistas toman de `lumina_rt` solo lo posterior a lo último que procesó el batch; **si hay diferencia, manda el batch** (incorpora lecturas atrasadas y correcciones) | Regla en las vistas `lumina_olap` | ⬜ |
