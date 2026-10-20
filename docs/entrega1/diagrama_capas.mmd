@@ -1,0 +1,82 @@
+flowchart LR
+  subgraph SRC["Fuentes"]
+    F1["Medidores inteligentes<br/>8 M, cada 30 min"]
+    F2["Operador de red<br/>demanda nacional y renovables"]
+    F3["Eventos de tarifa<br/>dinámica (DR)"]
+    F4["Clima<br/>pronóstico y observado"]
+    F5["Maestros<br/>hogares, Acorn, feriados"]
+  end
+
+  subgraph ING["Capa de Ingesta"]
+    I1["Managed Service for<br/>Apache Kafka<br/>tópicos por dominio"]
+    I2["Cargas batch<br/>Kafka Connect / Storage Transfer"]
+  end
+
+  subgraph COMP["Capa de Cómputo"]
+    C1["Spark Structured Streaming<br/>picos, anomalías, huecos, DR"]
+    C2["Spark batch serverless<br/>limpieza, modelo, perfiles"]
+    C3["BigQuery SQL / BQML<br/>pronóstico D+1, PdM"]
+  end
+
+  subgraph ALM["Capa de Almacenamiento"]
+    A1[("Lakehouse GCS<br/>raw / silver / gold<br/>Parquet, dual-region")]
+    A2[("BigQuery<br/>data warehouse<br/>estrella + STRUCT")]
+    A3[("Bigtable<br/>serie de tiempo<br/>por medidor")]
+  end
+
+  subgraph EXP["Capa de Exposición"]
+    E1["API REST / WebSocket<br/>Cloud Run"]
+    E2["Looker Studio<br/>informes OLAP"]
+    E3["Alertas DR<br/>tópico alerts.dr"]
+  end
+
+  subgraph TRV["Transversal"]
+    T1{{"Airflow<br/>orquestación"}}
+    T2{{"IAM, Secret Manager<br/>policy tags"}}
+    T3{{"Cloud Monitoring<br/>y Logging"}}
+  end
+
+  APP["App móvil y<br/>Front-End Lumina"]
+
+  F1 --> I1
+  F2 --> I1
+  F3 --> I1
+  F4 --> I2
+  F5 --> I2
+  I1 --> C1
+  I1 -->|sink raw| A1
+  I2 --> C2
+  C2 -->|silver / gold| A1
+  C2 -->|carga| A2
+  C1 --> A3
+  C1 --> A2
+  C1 --> E3
+  C3 -->|pronósticos| A2
+  A2 --> E2
+  A2 --> E1
+  A3 --> E1
+  E1 --> APP
+  E3 --> APP
+  T1 -.-> C2
+  T1 -.-> C3
+
+  classDef src fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef ing fill:#EAF7EF,stroke:#2E9E5B,color:#0F2E1C
+  classDef comp fill:#FDECEC,stroke:#D64545,color:#3B0E0E
+  classDef alm fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  classDef exp fill:#F1ECFB,stroke:#7A4FD0,color:#22123F
+  classDef trv fill:#FFFBE6,stroke:#B8960C,color:#332900
+  classDef app fill:#EEF0F3,stroke:#5B6575,color:#1C2230
+  class F1,F2,F3,F4,F5 src
+  class I1,I2 ing
+  class C1,C2,C3 comp
+  class A1,A2,A3 alm
+  class E1,E2,E3 exp
+  class T1,T2,T3 trv
+  class APP app
+  style SRC fill:#FAFCFF,stroke:#B8C7DC
+  style ING fill:#FBFBFB,stroke:#C9C9C9
+  style COMP fill:#FBFBFB,stroke:#C9C9C9
+  style ALM fill:#FBFBFB,stroke:#C9C9C9
+  style EXP fill:#FBFBFB,stroke:#C9C9C9
+  style TRV fill:#FFFFFF,stroke:#D9D9D9,stroke-dasharray: 4 3

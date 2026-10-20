@@ -31,7 +31,8 @@ airflow.db
 # Quarto
 _freeze/
 *_files/
-docs/*.html
+docs/**/*.html
+docs/**/*_files/
 
 # Sistema / editor
 .DS_Store
