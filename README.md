@@ -13,7 +13,7 @@ El enunciado está en [docs/Taller_Arquitectura_BigData_DataEnergia.qmd](docs/Ta
 
 ## Stack
 
-Google Cloud con un presupuesto máximo de US$300, priorizando código abierto: Apache Kafka, Apache Spark (Dataproc Serverless), Apache Airflow y Parquet sobre GCS, con BigQuery como data warehouse.
+Google Cloud con un presupuesto máximo de US$300, priorizando código abierto: Apache Kafka, Apache Spark (Managed Service for Apache Spark, ex Dataproc Serverless), Apache Airflow y Parquet sobre GCS, con BigQuery como data warehouse.
 
 ## Datos
 

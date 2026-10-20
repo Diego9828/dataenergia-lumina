@@ -113,7 +113,7 @@ flowchart LR
 |---|---|---|---|
 | 1 | **GCS** (2 buckets: `raw`, `curated`) | Data lake bronze/silver/gold, checkpoints de streaming | Almacenamiento desacoplado del cómputo, US$0.020/GB-mes; formato abierto (Parquet) = sin *lock-in*, requisito Lumina. |
 | 2 | **VM efímera de ingesta** | Descarga Kaggle → GCS sin pasar por la laptop | Ingress a GCP es gratis; se borra al terminar (~1 h). |
-| 3 | **Apache Spark en Dataproc Serverless** | Limpieza de ~167 M lecturas, modelo estrella, perfiles por hogar | Spark es open source; serverless = se paga solo mientras corre el *batch* (sin clúster encendido). |
+| 3 | **Apache Spark en Managed Service for Apache Spark (ex Dataproc Serverless)** | Limpieza de ~167 M lecturas, modelo estrella, perfiles por hogar | Spark es open source; serverless = se paga solo mientras corre el *batch* (sin clúster encendido). |
 | 4 | **Parquet particionado por fecha** (Iceberg opcional) | Formato silver/gold | Columnar y comprimido (~10 GB CSV → ~1.5–2 GB); BigQuery lo carga gratis. Iceberg aporta ACID/*time travel* si se quiere mostrar. |
 | 5 | **Apache Kafka (KRaft, 1 broker)** en VM | Bus de eventos: lecturas, demanda de red, eventos de tarifa, alertas | Open source (requisito RFP), particionado por `LCLid` para escalar a 1 lectura/min. Pub/Sub queda como alternativa gestionada. |
 | 6 | **Spark Structured Streaming** (misma VM) | Picos por zona/segmento, anomalías por medidor, huecos de telemetría, señales de respuesta a la demanda | Mismo motor que el batch (un solo código/skillset); *watermarks* y estado para detectar medidores que dejan de reportar. |

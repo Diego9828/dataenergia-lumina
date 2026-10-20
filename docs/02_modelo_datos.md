@@ -145,3 +145,52 @@ También: `fact_clima_hora` (DarkSky horario), `fact_carga_zona_30min` (agregado
 | `cobertura_baja` | cobertura < 90 % del periodo activo |
 | `huecos_frecuentes` | > 10 huecos de telemetría |
 | `ok` | resto |
+
+## Resultados de la corrida completa (2026-10-20)
+
+Motor: **Managed Service for Apache Spark** (ex Dataproc Serverless), runtime 2.2 / Spark 3.5, máx. 4 ejecutores.
+
+| Job | Duración | Costo (cota superior) |
+|---|---|---|
+| silver (112 bloques) | 10.6 min | US$0.21 |
+| gold | 21.8 min | US$0.44 |
+| Muestras de prueba (2 bloques) | 8.1 min | US$0.16 |
+
+Detalle en [bitacora_costos.log](bitacora_costos.log).
+
+### Volúmenes en BigQuery (`lumina_curated`)
+
+| Tabla | Filas | GiB |
+|---|---:|---:|
+| fact_consumo_30min | 167,811,461 | 8.28 |
+| consumo_dia_anidado (STRUCT/ARRAY) | 3,510,403 | 4.34 |
+| fact_consumo_diario | 3,510,403 | 0.25 |
+| fact_carga_transformador_30min | 4,394,004 | 0.23 |
+| perfil_hogar | 533,804 | 0.04 |
+| fact_carga_zona_30min | 317,746 | 0.01 |
+| fact_demanda_nacional_30min | 279,264 | 0.02 |
+| dims, clima DarkSky/NOAA, dq_medidor | < 25 k c/u | < 0.01 |
+
+### Validación contra Kaggle `daily_dataset`
+
+- 3,510,403 medidor-día coinciden **exactamente** en kWh y número de lecturas; total 35.54 GWh en ambos lados.
+- 30 días existen solo en Kaggle con `energy_count = 0`: su única lectura era el `Null` fuera de grilla que excluimos a propósito.
+- 5,566 hogares en el maestro, 5,561 con lecturas (5 sin datos).
+
+### Calidad de medidores (`dq_medidor`)
+
+| Diagnóstico | Medidores | Cobertura media |
+|---|---:|---:|
+| ok | 5,068 | 99.8 % |
+| huecos_frecuentes | 240 | 98.8 % |
+| ceros_prolongados (≥ 24 h en cero) | 232 | 99.6 % |
+| cobertura_baja (< 90 %) | 21 | 82.8 % |
+
+### Plano vs. anidado (bytes escaneados, dry run)
+
+| Consulta | Plano | STRUCT/ARRAY | Ahorro |
+|---|---:|---:|---:|
+| Curva de 1 medidor, enero 2013 | 273 MB | 128 MB | 2.1× |
+| kWh/día por grupo Acorn, todo el histórico | 4,321 MB (con JOIN) | 91 MB | 48× |
+
+El dry run no descuenta la poda por clustering, así que el ahorro real en la consulta de un medidor es menor. La tabla plana se mantiene para Looker Studio y para las inserciones de streaming; la anidada sirve para análisis por medidor-día.

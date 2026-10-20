@@ -1,3 +1,5 @@
 lumina-silver-20261020-162745  estado=FAILED  DCU-h=0.000  costo aprox.=US$0.000
 lumina-silver-20261020-162927  estado=SUCCEEDED  duracion=3.1 min  DCU-h=1.033 (cota sup.)  costo<=US$0.062
 lumina-gold-20261020-163354  estado=SUCCEEDED  duracion=5.0 min  DCU-h=1.667 (cota sup.)  costo<=US$0.100
+lumina-silver-20261020-164754  estado=SUCCEEDED  duracion=10.6 min  DCU-h=3.544 (cota sup.)  costo<=US$0.213
+lumina-gold-20261020-165907  estado=SUCCEEDED  duracion=21.8 min  DCU-h=7.250 (cota sup.)  costo<=US$0.435
