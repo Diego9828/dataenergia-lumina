@@ -26,7 +26,7 @@ flowchart LR
   end
 
   subgraph EXP["Capa de Exposición"]
-    E0["Vistas lumina_olap<br/>historia batch + hoy rt"]
+    E0["Vistas lumina_olap<br/>4 · hasta ayer del batch,<br/>hoy del rt; manda el batch"]
     E1["API REST / WebSocket<br/>Cloud Run"]
     E2["Looker Studio<br/>informes OLAP"]
     E3["Alertas DR<br/>tópico alerts.dr"]
@@ -46,7 +46,7 @@ flowchart LR
   F4 --> I2
   F5 --> I2
   I1 --> C1
-  I1 -->|1 · sink raw| A1
+  I1 -->|1 · datos en vivo a raw| A1
   I2 --> C2
   C2 -->|silver / gold| A1
   C2 -->|carga| A2
@@ -54,10 +54,9 @@ flowchart LR
   C1 --> A4
   C1 --> E3
   C3 -->|pronósticos| A2
-  A2 -.->|2 · perfiles y umbrales| C1
-  A2 -->|3 · unión| E0
-  A4 -->|3 · unión| E0
-  A2 -.->|4 · reconciliación| A4
+  A2 -.->|2 · reglas: perfiles y umbrales| C1
+  A2 -->|3 · definitivo| E0
+  A4 -->|3 · provisional| E0
   E0 --> E2
   E0 --> E1
   A3 --> E1

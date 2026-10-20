@@ -18,21 +18,20 @@ flowchart LR
   end
 
   subgraph SERVE["Capa de servicio"]
-    V["Vistas lumina_olap<br/>historia del batch<br/>y hoy del streaming"]
+    V["Vistas lumina_olap<br/>4 · regla: hasta ayer del batch,<br/>hoy del streaming;<br/>si difieren, manda el batch"]
     API["API Cloud Run<br/>Looker Studio"]
   end
 
   M --> K
   O --> B1
-  K -->|"1 · sink: la misma lectura"| B1
+  K -->|"1 · DATOS: cada lectura en vivo<br/>se copia a bronze"| B1
   K --> S1
   B1 --> B2
   B2 --> B3
-  B3 -.->|"2 · perfiles y umbrales<br/>se recargan cada día"| S1
+  B3 -.->|"2 · REGLAS, no datos:<br/>perfiles y umbrales,<br/>se recargan cada día"| S1
   S1 --> S2
-  B3 -->|"3 · unión"| V
-  S2 -->|"3 · unión"| V
-  B3 -.->|"4 · al día siguiente<br/>el batch reemplaza<br/>el dato provisional"| S2
+  B3 -->|"3 · definitivo"| V
+  S2 -->|"3 · provisional"| V
   V --> API
 
   classDef src fill:#E8F1FB,stroke:#3B7DD8,color:#10243F

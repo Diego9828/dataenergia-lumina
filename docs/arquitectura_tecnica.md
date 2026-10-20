@@ -29,6 +29,8 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 
 ![Arquitectura Lambda y puntos de sincronización](diagrama_lambda.png)
 
+**Sentido de los flujos:** los **datos** van del streaming al batch (cada lectura en vivo se copia a bronze y el batch la vuelve definitiva); del batch al streaming solo viajan **reglas** (perfiles y umbrales). El batch no escribe en `lumina_rt`: la precedencia del batch es una regla de las vistas.
+
 ### Puntos de sincronización
 
 | # | Qué se sincroniza | Cómo | Dónde | Estado |

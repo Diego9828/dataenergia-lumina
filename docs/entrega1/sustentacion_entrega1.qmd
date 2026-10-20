@@ -50,6 +50,8 @@ La arquitectura sigue el patrón **Lambda**: una **capa batch** que guarda la ve
 
 ![Arquitectura Lambda y puntos de sincronización](../diagrama_lambda.png){width=100%}
 
+**Sentido de los flujos:** los **datos** van del streaming al batch (cada lectura en vivo se copia a bronze y el batch la vuelve definitiva); del batch al streaming solo viajan **reglas** (perfiles y umbrales). El batch no escribe en `lumina_rt`: la precedencia del batch es una regla de las vistas.
+
 | # | Sincronización | Mecanismo |
 |---|---|---|
 | 1 | La lectura en vivo pasa a la historia | Kafka Connect copia cada evento a bronze; el batch nocturno la procesa |
