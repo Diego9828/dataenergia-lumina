@@ -90,7 +90,9 @@ def consulta(task_id: str, texto: str) -> BigQueryInsertJobOperator:
 with DAG(
     dag_id="lumina_batch_diario",
     description="Batch diario Lumina: Spark serverless (silver/gold) + BigQuery + calidad",
-    schedule="0 6 * * *",            # 06:00 UTC; solo corre mientras la VM está encendida
+    # En el taller: sin programación (solo disparos manuales), porque al despausar el DAG Airflow
+    # lanzaría por sí solo una corrida completa (~US$0.65). En producción: LUMINA_PROGRAMACION="0 6 * * *".
+    schedule=os.environ.get("LUMINA_PROGRAMACION") or None,
     start_date=datetime(2026, 10, 1),
     catchup=False,
     max_active_runs=1,

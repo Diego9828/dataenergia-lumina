@@ -22,6 +22,9 @@ x-airflow: &airflow
     BUCKET_RAW: ${BUCKET_RAW}
     BUCKET_CURATED: ${BUCKET_CURATED}
     SA_SPARK: ${SA_SPARK}
+    LUMINA_PROGRAMACION: ${LUMINA_PROGRAMACION:-}   # vacío = solo disparos manuales
+    # Conexión a GCP con las credenciales de la VM (cuenta lumina-ops); no guarda secretos
+    AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT: '{"conn_type": "google_cloud_platform", "extra": {"project": "${PROYECTO}"}}'
   volumes:
     - ../../src/dags:/opt/airflow/dags:ro
     - ../../src/sql:/opt/airflow/sql:ro
