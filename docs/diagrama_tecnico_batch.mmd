@@ -1,0 +1,54 @@
+flowchart LR
+  subgraph LAP["Laptop · Git Bash"]
+    L1["infra/01 a 03<br/>APIs, presupuesto,<br/>buckets, datasets, secreto"]
+    L4["infra/<br/>04_ingesta_kaggle.sh<br/>crea la VM efímera"]
+    L5["infra/<br/>05_spark_batch.sh<br/>envía silver y gold"]
+    L6["infra/<br/>06_cargar_bigquery.sh<br/>carga + gold_derivadas.sql"]
+  end
+
+  subgraph AFL["o bien: Airflow · VM lumina-ops"]
+    AF["src/dags/<br/>lumina_batch_diario.py<br/>sensor, Spark, cargas, calidad"]
+  end
+
+  SM[("Secret Manager<br/>kaggle-api-token")]
+
+  subgraph VMI["VM lumina-ingest · se borra sola"]
+    K1["src/ingestion/<br/>kaggle_to_gcs.sh"]
+  end
+
+  RAW[("GCS raw/kaggle/<br/>CSV original")]
+
+  subgraph DPS["Managed Spark serverless"]
+    S1["src/batch/silver.py<br/>tipado, UTC, banderas"]
+    S2["src/batch/gold.py<br/>estrella, perfiles, dq_medidor"]
+  end
+
+  CUR[("GCS curated/<br/>silver + gold Parquet")]
+  BQC[("BigQuery lumina_curated<br/>estrella, STRUCT/ARRAY,<br/>NOAA, umbral_zona")]
+
+  L1 --> SM
+  L4 -->|crea| K1
+  SM -.->|token| K1
+  K1 -->|descarga Kaggle| RAW
+  RAW --> S1
+  L5 -->|lanza| S1
+  S1 -->|silver| CUR
+  CUR --> S2
+  S2 -->|gold| CUR
+  CUR -->|bq load| BQC
+  L6 --> BQC
+  AF -.->|reemplaza 05 y 06| S1
+  AF -.-> BQC
+
+  classDef lap fill:#EEF0F3,stroke:#5B6575,color:#1C2230
+  classDef batch fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef store fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  classDef orq fill:#FFFBE6,stroke:#B8960C,color:#332900
+  class L1,L4,L5,L6 lap
+  class K1,S1,S2 batch
+  class SM,RAW,CUR,BQC store
+  class AF orq
+  style LAP fill:#FBFBFB,stroke:#C9C9C9
+  style AFL fill:#FFFDF2,stroke:#E0CF8A,stroke-dasharray: 4 3
+  style VMI fill:#FBFBFB,stroke:#C9C9C9,stroke-dasharray: 4 3
+  style DPS fill:#F7FAFE,stroke:#A9C4EB

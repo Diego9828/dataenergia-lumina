@@ -1,0 +1,30 @@
+flowchart LR
+  L7["Laptop<br/>infra/07_vm_ops.sh<br/>crear, replay, destruir"]
+
+  BQC[("BigQuery lumina_curated<br/>lecturas 2013, perfil_hogar,<br/>umbral_zona, dim_hogar")]
+
+  subgraph OPS["VM lumina-ops · Docker Compose · perfil streaming"]
+    RP["src/streaming/<br/>replay_producer.py<br/>1 s = 30 min, inyecta fallas"]
+    KF["Apache Kafka<br/>meter.readings · grid.demand<br/>alerts.meter · alerts.dr"]
+    SS["src/streaming/<br/>streaming_job.py<br/>anomalías · picos por zona<br/>medidores silenciosos · demanda"]
+  end
+
+  BQR[("BigQuery lumina_rt<br/>alertas · carga_zona_30min<br/>demanda_red")]
+  CKP[("GCS curated/<br/>checkpoints/streaming")]
+
+  L7 -->|crea y opera| OPS
+  BQC -->|lee la ventana a reproducir| RP
+  RP -->|lecturas como eventos| KF
+  KF --> SS
+  BQC -.->|perfiles y umbrales| SS
+  SS -->|Storage Write API| BQR
+  SS -->|señales DR y alertas| KF
+  SS -.->|offsets y estado| CKP
+
+  classDef lap fill:#EEF0F3,stroke:#5B6575,color:#1C2230
+  classDef rt fill:#FDECEC,stroke:#D64545,color:#3B0E0E
+  classDef store fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  class L7 lap
+  class RP,KF,SS rt
+  class BQC,BQR,CKP store
+  style OPS fill:#FFF8F8,stroke:#E8A3A3
