@@ -1,0 +1,4 @@
+# Los scripts corren en Linux (VMs, Dataproc): siempre LF, aunque se clone en Windows.
+* text=auto eol=lf
+*.png binary
+*.svg text eol=lf

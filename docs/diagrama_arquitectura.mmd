@@ -1,0 +1,73 @@
+flowchart LR
+  subgraph SRC["Fuentes"]
+    S1["Smart Meters London<br/>Kaggle"]
+    S2["Demanda nacional UK<br/>Kaggle"]
+    S3["Tarifas dToU 2013<br/>London Datastore"]
+    S4["NOAA GSOD<br/>BigQuery publico"]
+  end
+
+  subgraph BATCH["Ruta batch"]
+    I1["VM efimera de ingesta<br/>kaggle CLI a GCS"]
+    RAW[("GCS raw<br/>bronze: CSV original")]
+    P1["Spark batch<br/>Dataproc Serverless"]
+    CUR[("GCS curated<br/>silver/gold: Parquet")]
+    W1["BigQuery curated<br/>dimensiones + hechos"]
+    W3["BigQuery ml<br/>pronostico D+1, calidad"]
+  end
+
+  subgraph STREAM["Ruta streaming"]
+    I2["Replay producer<br/>Python"]
+    KAF["Apache Kafka<br/>lecturas, red, tarifas"]
+    SSS["Spark Structured Streaming<br/>picos, anomalias, huecos"]
+    W2["BigQuery rt<br/>alertas, carga por zona"]
+  end
+
+  subgraph SERVE["Servicio"]
+    W4["BigQuery olap<br/>vistas"]
+    C1["Looker Studio"]
+    C2["API / WebSocket<br/>Cloud Run"]
+    C3["Notebooks"]
+  end
+
+  AF{{"Apache Airflow<br/>orquestacion"}}
+
+  S1 --> I1
+  S2 --> I1
+  S3 --> I1
+  I1 --> RAW
+  RAW --> P1
+  P1 --> CUR
+  CUR -->|carga Parquet| W1
+  S4 --> W1
+  W1 --> W3
+  CUR --> I2
+  I2 --> KAF
+  KAF --> SSS
+  CUR -.->|perfiles por hogar| SSS
+  SSS --> W2
+  W1 --> W4
+  W2 --> W4
+  W3 --> W4
+  W4 --> C1
+  W4 --> C2
+  W1 --> C3
+  SSS -.->|alertas DR| C2
+  AF -.-> P1
+  AF -.-> W3
+
+  classDef src fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef gcs fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  classDef spark fill:#FDECEC,stroke:#D64545,color:#3B0E0E
+  classDef bq fill:#F1ECFB,stroke:#7A4FD0,color:#22123F
+  classDef con fill:#EAF7EF,stroke:#2E9E5B,color:#0F2E1C
+  classDef orq fill:#FFFBE6,stroke:#B8960C,color:#332900
+  class S1,S2,S3,S4 src
+  class I1,I2,RAW,CUR gcs
+  class P1,KAF,SSS spark
+  class W1,W2,W3,W4 bq
+  class C1,C2,C3 con
+  class AF orq
+  style SRC fill:#FAFCFF,stroke:#B8C7DC
+  style BATCH fill:#FCFCFC,stroke:#C9C9C9
+  style STREAM fill:#FCFCFC,stroke:#C9C9C9
+  style SERVE fill:#FCFCFC,stroke:#C9C9C9

@@ -1,0 +1,42 @@
+# Configuración local con IDs reales (proyecto, cuenta de facturación)
+infra/config.env
+*.local.env
+
+# Credenciales: nunca al repositorio
+kaggle.json
+.kaggle/
+*.pem
+*-key.json
+service-account*.json
+
+# Datos: viven en GCS / BigQuery, no en git
+data/
+*.csv
+*.parquet
+*.zip
+checkpoints/
+
+# Python / Jupyter
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Airflow / Docker local
+logs/
+airflow.db
+.env
+
+# Quarto
+_freeze/
+*_files/
+docs/*.html
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.svg
+*.html
