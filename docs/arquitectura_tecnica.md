@@ -15,6 +15,29 @@ Hay **dos caminos independientes**:
 - **Batch** (histórico, una vez al día): Kaggle → GCS → Spark → BigQuery. Lo orquesta **Airflow**, o lo corren a mano los scripts `infra/05` y `infra/06`.
 - **Tiempo real** (cada lectura, en segundos): medidores → **Kafka** → **Spark Structured Streaming** → alertas. Airflow **no** participa; en el taller los medidores se simulan con un *replay* de los datos de 2013.
 
+## Batch y streaming: arquitectura Lambda
+
+Hay dos enfoques clásicos para combinar batch y streaming:
+
+| | **Lambda** (el que usamos) | **Kappa** |
+|---|---|---|
+| Idea | Capa batch (verdad histórica) + capa de velocidad (lo reciente) + capa de servicio que las une | Un solo camino de streaming; la historia se reprocesa releyendo el log de Kafka |
+| A favor | El batch recalcula todo con exactitud; el streaming da latencia de segundos | Un solo código, nada que sincronizar |
+| En contra | Dos lógicas que mantener y sincronizar | Reprocesar 2 años desde el log es caro; entrenar perfiles y modelos sobre streaming es incómodo |
+
+**Por qué Lambda en Lumina:** los perfiles por hogar, el pronóstico D+1 y los informes necesitan recalcular toda la historia, y eso es trabajo de batch. Para que las dos lógicas no se separen, ambas capas usan **el mismo motor (Spark)** y **una sola puerta de entrada (Kafka)**.
+
+![Arquitectura Lambda y puntos de sincronización](diagrama_lambda.png)
+
+### Puntos de sincronización
+
+| # | Qué se sincroniza | Cómo | Dónde | Estado |
+|---|---|---|---|---|
+| 1 | Lectura en vivo → historia | Cada lectura que entra a Kafka se copia a bronze; el batch de la noche la procesa | Producción: Kafka Connect (sink a GCS). Taller: consulta `bronze` en `streaming_job.py` | ⬜ En el taller el replay lee de gold y no escribe bronze |
+| 2 | Lo aprendido → streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming | `streaming_job.py` (clase `Contexto`) | 🟡 Se cargan al arrancar el job; falta recargarlos cada día tras el batch |
+| 3 | Historia + hoy → consumo | Vistas que unen `lumina_curated` (hasta ayer) con `lumina_rt` (hoy) | `lumina_olap` (Fase 4) | ⬜ |
+| 4 | Dato provisional → definitivo | Las vistas toman de `lumina_rt` solo lo posterior a lo último que procesó el batch; **si hay diferencia, manda el batch** (incorpora lecturas atrasadas y correcciones) | Regla en las vistas `lumina_olap` | ⬜ |
+
 ## Camino batch
 
 ![Arquitectura técnica · batch](diagrama_tecnico_batch.png)

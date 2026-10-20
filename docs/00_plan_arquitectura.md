@@ -5,7 +5,9 @@
 
 ## 1. Estilo de arquitectura
 
-**Lakehouse con medallion (bronze → silver → gold) + ruta de streaming tipo Kappa.**
+**Arquitectura Lambda sobre un lakehouse con medallion (bronze → silver → gold).**
+
+> Corrección (2026-10-20): la primera versión decía "streaming tipo Kappa". Lo implementado es **Lambda**: capa batch (verdad histórica) + capa de velocidad (streaming) + capa de servicio que las une, con un solo motor (Spark) y una sola puerta de entrada (Kafka). Detalle y puntos de sincronización en [arquitectura_tecnica.md](arquitectura_tecnica.md#batch-y-streaming-arquitectura-lambda).
 
 - El histórico (Kaggle, NOAA) entra por lotes al *data lake* en GCS y se cura con Spark a Parquet.
 - El "tiempo real" es un *replay* de `halfhourly_dataset` hacia Kafka; Spark Structured Streaming detecta picos y anomalías usando los perfiles aprendidos en batch (el batch alimenta al streaming, el streaming alimenta al warehouse).

@@ -32,7 +32,8 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 
 ### Entrega 1 · Documento
 - ✅ Sustentación técnica, económica y DRP/HA → [entrega1/sustentacion_entrega1.docx](entrega1/sustentacion_entrega1.docx)
-- ✅ Diagrama de producción en 4 capas → [entrega1/diagrama_capas.png](entrega1/diagrama_capas.png)
+- ✅ Diagrama de producción en 4 capas, con capa batch, capa de velocidad y vistas unificadas → [entrega1/diagrama_capas.png](entrega1/diagrama_capas.png)
+- ✅ Sección "Patrón Lambda" con los 4 puntos de sincronización (§ 2.1 del documento)
 - ✅ Calculadora de consumo del primer año → `src/costos/calculadora_consumo.py`
 - ⬜ **Revisar supuestos marcados y entregar (alumno, 24-oct)**
 
@@ -41,6 +42,13 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ✅ Replay de la ola de frío: 1.84 M lecturas, 20/20 anomalías y 52/52 medidores silenciosos detectados → [03_streaming.md](03_streaming.md)
 - ✅ Umbrales calibrados offline (anomalías y picos por estación en hora punta)
 - 🟡 Regla de picos por estación validada solo offline; falta verla en vivo en el próximo encendido
+
+### Sincronización batch ↔ streaming (arquitectura Lambda)
+- ✅ Patrón definido y documentado (Lambda, no Kappa), con diagrama → [arquitectura_tecnica.md](arquitectura_tecnica.md#batch-y-streaming-arquitectura-lambda)
+- ⬜ 1 · Lectura en vivo → bronze: consulta `bronze` en `streaming_job.py`
+- 🟡 2 · Perfiles y umbrales → streaming: se cargan al arrancar; falta recargarlos cada día
+- ⬜ 3 · Vistas que unen historia (`curated`) y hoy (`rt`) en `lumina_olap` (Fase 4)
+- ⬜ 4 · Reconciliación: de `rt` solo lo posterior al último batch; manda el batch (Fase 4)
 
 ### Orquestación · Airflow (camino batch, no tiempo real)
 - ✅ DAG `lumina_batch_diario`: sensor → silver → gold → 13 cargas → derivadas → 3 controles → `src/dags/`

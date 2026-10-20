@@ -40,9 +40,22 @@ Lumina Energía necesita convertir las lecturas de 8 millones de medidores intel
 |---|---|---|
 | **Ingesta** | Managed Service for Apache Kafka; Kafka Connect y Storage Transfer para cargas batch | Recibir lecturas, demanda de red y eventos de tarifa como flujo; traer clima y maestros por lotes |
 | **Cómputo** | Spark Structured Streaming (24/7); Spark batch serverless (Managed Service for Apache Spark, ex Dataproc Serverless); BigQuery SQL/BQML | Detectar picos, anomalías y huecos en segundos; limpiar y modelar el histórico; pronosticar la demanda D+1 |
-| **Almacenamiento** | Lakehouse en GCS (raw, silver, gold en Parquet); BigQuery; Bigtable | Fuente de verdad barata y abierta; warehouse analítico; serie de tiempo por medidor para la app |
-| **Exposición** | API REST/WebSocket en Cloud Run; Looker Studio; tópico `alerts.dr` | Consumo en vivo para la app, informes OLAP y señales de respuesta a la demanda |
+| **Almacenamiento** | Lakehouse en GCS (raw, silver, gold en Parquet); BigQuery `curated` (capa batch) y `rt` (capa de velocidad); Bigtable | Fuente de verdad barata y abierta; warehouse analítico histórico y de lo reciente; serie de tiempo por medidor para la app |
+| **Exposición** | Vistas `lumina_olap` (unen historia y hoy); API REST/WebSocket en Cloud Run; Looker Studio; tópico `alerts.dr` | Una sola vista de los datos para la app, los informes OLAP y las señales de respuesta a la demanda |
 | Transversal | Airflow (Composer 3), IAM, Secret Manager, policy tags, Cloud Monitoring y Logging | Orquestación, seguridad, gobierno y observabilidad |
+
+## Patrón Lambda: cómo se combinan batch y streaming
+
+La arquitectura sigue el patrón **Lambda**: una **capa batch** que guarda la verdad histórica y aprende qué es normal para cada hogar, una **capa de velocidad** que evalúa cada lectura nueva en segundos, y una **capa de servicio** que las une. Se descartó **Kappa** (solo streaming, reprocesando la historia desde el log de Kafka), porque los perfiles por hogar, el pronóstico D+1 y los informes requieren recalcular dos años de historia, y eso es más barato y simple en batch. Para no duplicar lógica, ambas capas usan el mismo motor (Spark) y una sola puerta de entrada (Kafka).
+
+![Arquitectura Lambda y puntos de sincronización](../diagrama_lambda.png){width=100%}
+
+| # | Sincronización | Mecanismo |
+|---|---|---|
+| 1 | La lectura en vivo pasa a la historia | Kafka Connect copia cada evento a bronze; el batch nocturno la procesa |
+| 2 | Lo aprendido llega al streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming; se recargan cada día |
+| 3 | Una sola vista para el consumo | Las vistas `lumina_olap` unen `curated` (hasta ayer) con `rt` (hoy) |
+| 4 | El dato provisional se vuelve definitivo | De `rt` solo se toma lo posterior al último batch; si hay diferencia, manda el batch, que incorpora lecturas atrasadas |
 
 ## Producción frente al prototipo del taller
 

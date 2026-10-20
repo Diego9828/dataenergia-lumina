@@ -1,0 +1,53 @@
+flowchart LR
+  subgraph SRC["Fuentes"]
+    M["Medidores<br/>cada 30 min"]
+    O["Clima, maestros,<br/>feriados"]
+  end
+
+  K["Apache Kafka<br/>meter.readings<br/>puerta única de entrada"]
+
+  subgraph BATCH["Capa batch · verdad histórica"]
+    B1[("Bronze en GCS<br/>lecturas crudas")]
+    B2["Spark batch<br/>silver.py · gold.py<br/>cada noche"]
+    B3[("BigQuery lumina_curated<br/>historia hasta ayer,<br/>perfiles, umbrales")]
+  end
+
+  subgraph SPEED["Capa de velocidad · lo de hoy"]
+    S1["Spark Streaming<br/>streaming_job.py<br/>en segundos"]
+    S2[("BigQuery lumina_rt<br/>alertas, carga de hoy<br/>dato provisional")]
+  end
+
+  subgraph SERVE["Capa de servicio"]
+    V["Vistas lumina_olap<br/>historia del batch<br/>y hoy del streaming"]
+    API["API Cloud Run<br/>Looker Studio"]
+  end
+
+  M --> K
+  O --> B1
+  K -->|"1 · sink: la misma lectura"| B1
+  K --> S1
+  B1 --> B2
+  B2 --> B3
+  B3 -.->|"2 · perfiles y umbrales<br/>se recargan cada día"| S1
+  S1 --> S2
+  B3 -->|"3 · unión"| V
+  S2 -->|"3 · unión"| V
+  B3 -.->|"4 · al día siguiente<br/>el batch reemplaza<br/>el dato provisional"| S2
+  V --> API
+
+  classDef src fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef kafka fill:#EAF7EF,stroke:#2E9E5B,color:#0F2E1C
+  classDef batch fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef rt fill:#FDECEC,stroke:#D64545,color:#3B0E0E
+  classDef store fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  classDef serve fill:#F1ECFB,stroke:#7A4FD0,color:#22123F
+  class M,O src
+  class K kafka
+  class B2 batch
+  class S1 rt
+  class B1,B3,S2 store
+  class V,API serve
+  style SRC fill:#FAFCFF,stroke:#B8C7DC
+  style BATCH fill:#F7FAFE,stroke:#A9C4EB
+  style SPEED fill:#FFF8F8,stroke:#E8A3A3
+  style SERVE fill:#FAF8FE,stroke:#C3B2EA

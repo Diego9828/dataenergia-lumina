@@ -20,11 +20,13 @@ flowchart LR
 
   subgraph ALM["Capa de Almacenamiento"]
     A1[("Lakehouse GCS<br/>raw / silver / gold<br/>Parquet, dual-region")]
-    A2[("BigQuery<br/>data warehouse<br/>estrella + STRUCT")]
+    A2[("BigQuery curated<br/>capa batch: historia,<br/>perfiles, umbrales")]
+    A4[("BigQuery rt<br/>capa de velocidad:<br/>alertas, carga de hoy")]
     A3[("Bigtable<br/>serie de tiempo<br/>por medidor")]
   end
 
   subgraph EXP["Capa de Exposición"]
+    E0["Vistas lumina_olap<br/>historia batch + hoy rt"]
     E1["API REST / WebSocket<br/>Cloud Run"]
     E2["Looker Studio<br/>informes OLAP"]
     E3["Alertas DR<br/>tópico alerts.dr"]
@@ -44,16 +46,20 @@ flowchart LR
   F4 --> I2
   F5 --> I2
   I1 --> C1
-  I1 -->|sink raw| A1
+  I1 -->|1 · sink raw| A1
   I2 --> C2
   C2 -->|silver / gold| A1
   C2 -->|carga| A2
   C1 --> A3
-  C1 --> A2
+  C1 --> A4
   C1 --> E3
   C3 -->|pronósticos| A2
-  A2 --> E2
-  A2 --> E1
+  A2 -.->|2 · perfiles y umbrales| C1
+  A2 -->|3 · unión| E0
+  A4 -->|3 · unión| E0
+  A2 -.->|4 · reconciliación| A4
+  E0 --> E2
+  E0 --> E1
   A3 --> E1
   E1 --> APP
   E3 --> APP
@@ -70,8 +76,8 @@ flowchart LR
   class F1,F2,F3,F4,F5 src
   class I1,I2 ing
   class C1,C2,C3 comp
-  class A1,A2,A3 alm
-  class E1,E2,E3 exp
+  class A1,A2,A3,A4 alm
+  class E0,E1,E2,E3 exp
   class T1,T2,T3 trv
   class APP app
   style SRC fill:#FAFCFF,stroke:#B8C7DC
