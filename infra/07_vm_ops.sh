@@ -1,33 +1,68 @@
 #!/usr/bin/env bash
-# Fase 3 · VM lumina-ops (Kafka + Spark Structured Streaming en Docker Compose).
+# VM lumina-ops: Docker Compose con perfiles `streaming` (Kafka + Spark Structured Streaming)
+# y `airflow` (orquesta el batch en Spark serverless). Solo se enciende para probar o demostrar.
 #
-#   bash infra/07_vm_ops.sh tablas      # umbrales + tablas lumina_rt en BigQuery (sin VM)
-#   bash infra/07_vm_ops.sh crear       # cuenta de servicio, horario de apagado y VM (la ENCIENDE)
-#   bash infra/07_vm_ops.sh desplegar   # sube el código a GCS y reinicia el stack en la VM
-#   bash infra/07_vm_ops.sh iniciar     # enciende la VM (el stack arranca solo)
-#   bash infra/07_vm_ops.sh replay [args del productor]   # p. ej. --dias 2 --anomalias 20
-#   bash infra/07_vm_ops.sh logs [servicio]
-#   bash infra/07_vm_ops.sh estado
-#   bash infra/07_vm_ops.sh detener     # APAGA la VM (conserva el disco, ~US$3/mes)
-#   bash infra/07_vm_ops.sh destruir    # BORRA la VM y su disco (costo 0 entre demos)
+#   bash infra/07_vm_ops.sh tablas                 # tablas de salida lumina_rt (sin VM)
+#   bash infra/07_vm_ops.sh crear [perfiles]       # crea y ENCIENDE la VM; perfiles: streaming (def.), airflow o streaming,airflow
+#   bash infra/07_vm_ops.sh perfiles <lista>       # cambia los perfiles activos en la VM encendida
+#   bash infra/07_vm_ops.sh desplegar              # sube el código y reinicia el stack
+#   bash infra/07_vm_ops.sh iniciar | detener      # enciende / apaga (el disco cuesta ~US$3/mes)
+#   bash infra/07_vm_ops.sh destruir               # BORRA VM y disco (costo 0 entre demos)
+#   bash infra/07_vm_ops.sh replay [args]          # p. ej. --dias 2 --anomalias 20
+#   bash infra/07_vm_ops.sh dag [muestra]          # dispara lumina_batch_diario (muestra = 2 bloques)
+#   bash infra/07_vm_ops.sh tunel                  # Airflow en http://localhost:8080 (Ctrl+C para cerrar)
+#   bash infra/07_vm_ops.sh clave_airflow          # muestra la contraseña del usuario admin de Airflow
+#   bash infra/07_vm_ops.sh logs [servicio] | estado
 #
-# Costo: e2-standard-4 US$0.134/h encendida; disco 30 GB pd-balanced ≈ US$3/mes aunque esté apagada.
-# Red de seguridad: horario que apaga la VM todos los días a las 23:00 (hora de Lima).
+# Costo: e2-standard-4 US$0.134/h encendida. Red de seguridad: horario que la apaga a las 23:00 (Lima).
 source "$(dirname "$0")/_common.sh"
 require_config
 
 SA_NAME="lumina-ops"
 SA_EMAIL="$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com"
+SA_SPARK="lumina-spark@$PROJECT_ID.iam.gserviceaccount.com"
 HORARIO="lumina-apagado-nocturno"
 VM=(--project "$PROJECT_ID" --zone "$ZONE")
+COMPOSE="cd /opt/lumina/infra/ops && sudo docker compose"
 
 ssh_vm() { gcloud compute ssh "$OPS_VM" "${VM[@]}" --quiet --command "$1"; }
 
 subir_bundle() {
   local tmp; tmp="$(mktemp -d)"
-  tar -czf "$tmp/bundle.tgz" -C "$REPO_DIR" infra/ops src/streaming
+  tar -czf "$tmp/bundle.tgz" -C "$REPO_DIR" infra/ops src/streaming src/dags src/sql
   gcloud storage cp "$tmp/bundle.tgz" "gs://$BUCKET_CURATED/_ops/bundle.tgz" --quiet
+  # Código de los jobs batch que lanza Airflow en Spark serverless
+  gcloud storage cp "$REPO_DIR"/src/batch/{silver,gold,lumina_common}.py \
+    "gs://$BUCKET_CURATED/_codigo/airflow/" --quiet
   rm -rf "$tmp"
+}
+
+dataset_editor() {  # $1 dataset: escritura solo en ese dataset (condición IAM)
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member "serviceAccount:$SA_EMAIL" --role roles/bigquery.dataEditor \
+    --condition "title=solo_$1,expression=resource.name.startsWith(\"projects/$PROJECT_ID/datasets/$1\")" >/dev/null
+}
+
+permisos() {
+  log "Cuenta de servicio $SA_EMAIL y permisos de mínimo privilegio"
+  if ! gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT_ID" \
+      --display-name "Lumina · VM de streaming y Airflow"
+    sleep 10
+  fi
+  for rol in roles/bigquery.jobUser roles/bigquery.readSessionUser roles/bigquery.dataViewer \
+             roles/logging.logWriter roles/dataproc.editor; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" --condition=None \
+      --member "serviceAccount:$SA_EMAIL" --role "$rol" >/dev/null
+  done
+  for ds in lumina_rt lumina_curated lumina_muestra; do dataset_editor "$ds"; done
+  gcloud storage buckets add-iam-policy-binding "gs://$BUCKET_CURATED" \
+    --member "serviceAccount:$SA_EMAIL" --role roles/storage.objectAdmin >/dev/null
+  gcloud storage buckets add-iam-policy-binding "gs://$BUCKET_RAW" \
+    --member "serviceAccount:$SA_EMAIL" --role roles/storage.objectViewer >/dev/null
+  # Airflow lanza los batches de Spark como lumina-spark
+  gcloud iam service-accounts add-iam-policy-binding "$SA_SPARK" --project "$PROJECT_ID" \
+    --member "serviceAccount:$SA_EMAIL" --role roles/iam.serviceAccountUser >/dev/null
 }
 
 case "${1:-}" in
@@ -37,25 +72,8 @@ case "${1:-}" in
     ;;
 
   crear)
-    log "Cuenta de servicio $SA_EMAIL"
-    if ! gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT_ID" >/dev/null 2>&1; then
-      gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT_ID" \
-        --display-name "Lumina · VM de streaming (Kafka + Spark)"
-      sleep 10
-    fi
-    for rol in roles/bigquery.jobUser roles/bigquery.readSessionUser roles/bigquery.dataViewer \
-               roles/logging.logWriter; do
-      gcloud projects add-iam-policy-binding "$PROJECT_ID" --condition=None \
-        --member "serviceAccount:$SA_EMAIL" --role "$rol" >/dev/null
-    done
-    # Escritura solo en lumina_rt: binding del dataset o, si bq no lo soporta, condición IAM.
-    bq --project_id "$PROJECT_ID" add-iam-policy-binding \
-      --member "serviceAccount:$SA_EMAIL" --role roles/bigquery.dataEditor "$PROJECT_ID:lumina_rt" >/dev/null 2>&1 \
-    || gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-      --member "serviceAccount:$SA_EMAIL" --role roles/bigquery.dataEditor \
-      --condition "title=solo_lumina_rt,expression=resource.name.startsWith(\"projects/$PROJECT_ID/datasets/lumina_rt\")" >/dev/null
-    gcloud storage buckets add-iam-policy-binding "gs://$BUCKET_CURATED" \
-      --member "serviceAccount:$SA_EMAIL" --role roles/storage.objectAdmin >/dev/null
+    PERFILES="${2:-streaming}"
+    permisos
 
     log "Horario $HORARIO: apaga la VM a las 23:00 (America/Lima)"
     if ! gcloud compute resource-policies describe "$HORARIO" --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
@@ -69,7 +87,7 @@ case "${1:-}" in
         --role roles/compute.instanceAdmin.v1 >/dev/null
     fi
 
-    log "Subiendo código y creando $OPS_VM (queda ENCENDIDA)"
+    log "Subiendo código y creando $OPS_VM con perfiles '$PERFILES' (queda ENCENDIDA)"
     subir_bundle
     gcloud compute instances create "$OPS_VM" "${VM[@]}" \
       --machine-type e2-standard-4 \
@@ -78,9 +96,15 @@ case "${1:-}" in
       --service-account "$SA_EMAIL" --scopes cloud-platform \
       --resource-policies "$HORARIO" \
       --labels "$LABELS" \
-      --metadata "project-id=$PROJECT_ID,bucket-curated=$BUCKET_CURATED" \
+      --metadata "^;^project-id=$PROJECT_ID;bucket-curated=$BUCKET_CURATED;bucket-raw=$BUCKET_RAW;region=$REGION;sa-spark=$SA_SPARK;perfiles=$PERFILES" \
       --metadata-from-file "startup-script=$REPO_DIR/infra/ops/vm_startup.sh"
-    echo "El primer arranque instala Docker y construye imágenes (~5-8 min): bash infra/07_vm_ops.sh logs"
+    echo "El primer arranque instala Docker y levanta el stack (~5-8 min): bash infra/07_vm_ops.sh logs"
+    ;;
+
+  perfiles)
+    [[ -n "${2:-}" ]] || die "Uso: 07_vm_ops.sh perfiles streaming|airflow|streaming,airflow"
+    gcloud compute instances add-metadata "$OPS_VM" "${VM[@]}" --metadata "^;^perfiles=$2"
+    ssh_vm "sudo google_metadata_script_runner startup"
     ;;
 
   desplegar)
@@ -94,16 +118,33 @@ case "${1:-}" in
 
   replay)
     shift
-    ssh_vm "cd /opt/lumina/infra/ops && sudo docker compose run --rm replay --proyecto $PROJECT_ID $*"
+    ssh_vm "cd /opt/lumina/infra/ops && sudo COMPOSE_PROFILES=streaming,replay docker compose run --rm replay --proyecto $PROJECT_ID $*"
+    ;;
+
+  dag)
+    conf='{}'
+    [[ "${2:-}" == "muestra" ]] && conf='{"muestra": true}'
+    ssh_vm "$COMPOSE exec -T airflow-scheduler airflow dags unpause lumina_batch_diario >/dev/null && \
+            $COMPOSE exec -T airflow-scheduler airflow dags trigger lumina_batch_diario --conf '$conf'"
+    ;;
+
+  tunel)
+    echo "Airflow en http://localhost:8080 (usuario admin; clave: bash infra/07_vm_ops.sh clave_airflow)."
+    echo "Deja esta ventana abierta; Ctrl+C cierra el túnel."
+    gcloud compute ssh "$OPS_VM" "${VM[@]}" --quiet --ssh-flag="-L 8080:localhost:8080" --ssh-flag="-N"
+    ;;
+
+  clave_airflow)
+    ssh_vm "sudo cat /opt/lumina/.airflow_admin"
     ;;
 
   logs)
-    ssh_vm "cd /opt/lumina/infra/ops && sudo docker compose logs --tail 80 ${2:-} 2>/dev/null || sudo tail -n 60 /var/log/lumina-ops.log"
+    ssh_vm "$COMPOSE logs --tail 80 ${2:-} 2>/dev/null || sudo tail -n 60 /var/log/lumina-ops.log"
     ;;
 
   estado)
     gcloud compute instances describe "$OPS_VM" "${VM[@]}" --format "value(name,status)"
-    ssh_vm "cd /opt/lumina/infra/ops && sudo docker compose ps" || true
+    ssh_vm "$COMPOSE ps" || true
     ;;
 
   detener)
@@ -117,5 +158,5 @@ case "${1:-}" in
     ;;
 
   *)
-    sed -n '2,16p' "$0"; exit 1 ;;
+    sed -n '2,17p' "$0"; exit 1 ;;
 esac

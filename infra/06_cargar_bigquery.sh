@@ -2,14 +2,17 @@
 # Fase 2 · Carga gold (Parquet en GCS) -> BigQuery lumina_curated, más:
 #   - clima_noaa_heathrow: cruce con el warehouse público NOAA GSOD
 #   - consumo_dia_anidado: 1 fila por medidor-día con STRUCT (hogar) y ARRAY<STRUCT> (48 lecturas)
-# Uso: bash infra/06_cargar_bigquery.sh [--muestra]
+#   - umbral_zona: umbrales de pico por zona para el streaming
+# (SQL en src/sql/gold_derivadas.sql, compartido con el DAG de Airflow).
+# Uso: bash infra/06_cargar_bigquery.sh [--muestra]   (--muestra carga en el dataset lumina_muestra)
 # Costo: las cargas desde GCS son gratis; las 2 consultas CTAS escanean ~6 GB (free tier: 1 TB/mes).
 source "$(dirname "$0")/_common.sh"
 require_config
 
 DS="lumina_curated"
-GOLD="gs://$BUCKET_CURATED/gold"   # con --muestra se carga la muestra en las mismas tablas (la carga completa la reemplaza)
+GOLD="gs://$BUCKET_CURATED/gold"
 if [[ "${1:-}" == "--muestra" ]]; then
+  DS="lumina_muestra"
   GOLD="gs://$BUCKET_CURATED/muestra/gold"
 fi
 BQ=(bq --project_id "$PROJECT_ID" --location "$BQ_LOCATION")
@@ -34,42 +37,12 @@ cargar fact_consumo_diario \
 cargar fact_carga_transformador_30min \
   --time_partitioning_field fecha --time_partitioning_type MONTH --clustering_fields zona,transformador
 
-log "clima_noaa_heathrow (NOAA GSOD, estación 037720, 2011-2014; °F -> °C)"
-"${BQ[@]}" query --nouse_legacy_sql >/dev/null <<SQL
-CREATE OR REPLACE TABLE \`$PROJECT_ID.$DS.clima_noaa_heathrow\` AS
-SELECT
-  DATE(CAST(year AS INT64), CAST(mo AS INT64), CAST(da AS INT64)) AS fecha,
-  ROUND((NULLIF(temp, 9999.9) - 32) * 5 / 9, 2) AS temp_media_c,
-  ROUND((NULLIF(max, 9999.9) - 32) * 5 / 9, 2) AS temp_max_c,
-  ROUND((NULLIF(min, 9999.9) - 32) * 5 / 9, 2) AS temp_min_c,
-  ROUND(NULLIF(prcp, 99.99) * 25.4, 2) AS precipitacion_mm,
-  ROUND(SAFE_CAST(NULLIF(wdsp, '999.9') AS FLOAT64) * 0.514444, 2) AS viento_ms
-FROM \`bigquery-public-data.noaa_gsod.gsod*\`
-WHERE _TABLE_SUFFIX BETWEEN '2011' AND '2014' AND stn = '037720'
-SQL
-echo "  $DS.clima_noaa_heathrow: $("${BQ[@]}" query --nouse_legacy_sql --format csv \
-  "SELECT COUNT(*) FROM \`$PROJECT_ID.$DS.clima_noaa_heathrow\`" | tail -1) filas"
-
-log "consumo_dia_anidado (STRUCT + ARRAY<STRUCT>)"
-"${BQ[@]}" query --nouse_legacy_sql >/dev/null <<SQL
-CREATE OR REPLACE TABLE \`$PROJECT_ID.$DS.consumo_dia_anidado\`
-PARTITION BY DATE_TRUNC(fecha, MONTH)
-CLUSTER BY lclid AS
-SELECT
-  c.lclid,
-  c.fecha,
-  STRUCT(h.tarifa, h.acorn, h.acorn_grupo, h.zona, h.transformador) AS hogar,
-  ROUND(SUM(c.kwh), 4) AS kwh_total,
-  ROUND(SUM(IF(c.es_punta, c.kwh, 0)), 4) AS kwh_punta,
-  COUNT(c.kwh) AS n_lecturas,
-  ARRAY_AGG(STRUCT(c.periodo_local, c.ts_utc, c.kwh, c.es_nulo, c.es_punta) ORDER BY c.ts_utc) AS lecturas
-FROM \`$PROJECT_ID.$DS.fact_consumo_30min\` c
-JOIN \`$PROJECT_ID.$DS.dim_hogar\` h USING (lclid)
-WHERE c.fecha IS NOT NULL
-GROUP BY c.lclid, c.fecha, h.tarifa, h.acorn, h.acorn_grupo, h.zona, h.transformador
-SQL
-echo "  $DS.consumo_dia_anidado: $("${BQ[@]}" query --nouse_legacy_sql --format csv \
-  "SELECT COUNT(*) FROM \`$PROJECT_ID.$DS.consumo_dia_anidado\`" | tail -1) filas"
+log "Tablas derivadas: clima_noaa_heathrow, consumo_dia_anidado (STRUCT/ARRAY), umbral_zona"
+sed -e "s/\${P}/$PROJECT_ID/g" -e "s/\${DS}/$DS/g" "$REPO_DIR/src/sql/gold_derivadas.sql" |
+  "${BQ[@]}" query --nouse_legacy_sql >/dev/null
+for t in clima_noaa_heathrow consumo_dia_anidado umbral_zona; do
+  echo "  $DS.$t: $("${BQ[@]}" query --nouse_legacy_sql --format csv     "SELECT COUNT(*) FROM \`$PROJECT_ID.$DS.$t\`" | tail -1) filas"
+done
 
 log "Almacenamiento por tabla"
 "${BQ[@]}" query --nouse_legacy_sql --format pretty \
