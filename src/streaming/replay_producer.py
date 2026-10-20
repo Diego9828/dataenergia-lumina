@@ -4,7 +4,7 @@ Lee una ventana de fact_consumo_30min (BigQuery) y emite cada media hora simulad
 en `--segundos-intervalo` segundos reales. Para la demo puede inyectar fallas:
   --concentrador-caido Z3-T07   todos los medidores de ese transformador dejan de
                                 enviar desde --caida-desde (simula un concentrador caído)
-  --anomalias 20                multiplica por 8 el consumo de 20 lecturas al azar
+  --anomalias 20                multiplica por 10 el consumo de 20 lecturas (> 0.4 kWh) al azar
 
 Tópicos: meter.readings (clave = lclid) y grid.demand (clave = "GB").
 Ejemplo:
@@ -74,10 +74,10 @@ def inyectar_fallas(lecturas, args: argparse.Namespace):
         print(f"[falla] concentrador {args.concentrador_caido} caído desde {args.caida_desde}: "
               f"{afectados} medidores sin datos", flush=True)
     if args.anomalias:
-        candidatos = lecturas.index[lecturas.kwh > 0.05]
+        candidatos = lecturas.index[lecturas.kwh > 0.4]
         idx = rng.choice(candidatos, args.anomalias, replace=False)
         lecturas = lecturas.copy()
-        lecturas.loc[idx, "kwh"] = lecturas.loc[idx, "kwh"] * 8
+        lecturas.loc[idx, "kwh"] = lecturas.loc[idx, "kwh"] * 10
         for _, r in lecturas.loc[idx].sort_values("ts_utc").iterrows():
             print(f"[falla] anomalía inyectada: {r.lclid} {r.ts_utc:%Y-%m-%d %H:%M} kwh={r.kwh:.3f}", flush=True)
     return lecturas

@@ -8,7 +8,8 @@
 #   bash infra/07_vm_ops.sh replay [args del productor]   # p. ej. --dias 2 --anomalias 20
 #   bash infra/07_vm_ops.sh logs [servicio]
 #   bash infra/07_vm_ops.sh estado
-#   bash infra/07_vm_ops.sh detener     # APAGA la VM (conserva el disco)
+#   bash infra/07_vm_ops.sh detener     # APAGA la VM (conserva el disco, ~US$3/mes)
+#   bash infra/07_vm_ops.sh destruir    # BORRA la VM y su disco (costo 0 entre demos)
 #
 # Costo: e2-standard-4 US$0.134/h encendida; disco 30 GB pd-balanced ≈ US$3/mes aunque esté apagada.
 # Red de seguridad: horario que apaga la VM todos los días a las 23:00 (hora de Lima).
@@ -109,6 +110,12 @@ case "${1:-}" in
     gcloud compute instances stop "$OPS_VM" "${VM[@]}" --quiet
     ;;
 
+  destruir)
+    # Borra VM y disco: costo 0 entre demos. Todo el estado durable está en GCS/BigQuery
+    # y "crear" reconstruye el stack (~8 min). Conserva la cuenta de servicio y el horario.
+    gcloud compute instances delete "$OPS_VM" "${VM[@]}" --quiet
+    ;;
+
   *)
-    sed -n '2,15p' "$0"; exit 1 ;;
+    sed -n '2,16p' "$0"; exit 1 ;;
 esac

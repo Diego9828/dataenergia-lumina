@@ -3,7 +3,7 @@
 Consultas (cada una con su checkpoint en GCS):
   1. anomalias  - lectura vs. perfil del hogar (misma media hora local y tipo de día)
                   -> lumina_rt.alertas (consumo_anomalo, lectura_negativa) + tópico alerts.meter
-  2. carga_zona - ventanas de 30 min por zona vs. p95 histórico por medidor
+  2. carga_zona - ventanas de 30 min por zona vs. p95 histórico de la estación (hora punta)
                   -> lumina_rt.carga_zona_30min; picos -> alertas (pico_zona) + tópico alerts.dr
   3. silencio   - estado por medidor con timeout en tiempo de evento
                   -> alertas (medidor_silencioso) + tópico alerts.meter
@@ -27,7 +27,8 @@ from pyspark.sql.types import (DoubleType, LongType, StringType, StructField,
 ZONA_LONDRES = "Europe/London"
 WATERMARK = "1 hour"                 # tolerancia a lecturas atrasadas (tiempo de evento)
 SILENCIO_MS = 2 * 3600 * 1000        # 4 intervalos sin datos -> medidor silencioso
-FACTOR_P95, SIGMAS, KWH_MINIMO = 2.5, 4.0, 0.3
+PUNTA_DESDE, PUNTA_HASTA = 17, 20   # hora punta local: solo ahí se emiten señales DR
+FACTOR_P95, SIGMAS, KWH_MINIMO = 4.0, 8.0, 1.5   # calibrado: ~0.02 % de lecturas (semana 14-20 ene 2013)
 
 LECTURA = StructType([StructField("lclid", StringType()), StructField("ts_utc", StringType()),
                       StructField("kwh", DoubleType())])
@@ -51,11 +52,11 @@ class Contexto:
         cur = f"{args.proyecto}.lumina_curated"
         leer = lambda t: spark.read.format("bigquery").option("table", f"{cur}.{t}").load()  # noqa: E731
         self.hogar = F.broadcast(leer("dim_hogar").select("lclid", "zona", "transformador").cache())
-        self.fechas = F.broadcast(leer("dim_fecha").select("fecha", "tipo_dia").cache())
+        self.fechas = F.broadcast(leer("dim_fecha").select("fecha", "tipo_dia", "estacion").cache())
         self.perfil = F.broadcast(leer("perfil_hogar").select(
             "lclid", "tipo_dia", "periodo_local", "kwh_media", "kwh_std", "kwh_p95").cache())
         self.umbral = F.broadcast(leer("umbral_zona").select(
-            "zona", "tipo_dia", "periodo_local", "kw_p95").cache())
+            "zona", "tipo_dia", "estacion", "periodo_local", "kw_p95").cache())
 
     def tabla(self, nombre: str) -> str:
         return f"{self.args.proyecto}.lumina_rt.{nombre}"
@@ -151,9 +152,12 @@ def consulta_carga_zona(ctx: Contexto, lect: DataFrame):
                .withColumn("fecha", F.to_date("ts_utc"))
                .withColumn("periodo_local", periodo_local("ts_utc"))
                .join(ctx.fechas, "fecha", "left")
-               .join(ctx.umbral, ["zona", "tipo_dia", "periodo_local"], "left")
+               .join(ctx.umbral, ["zona", "tipo_dia", "estacion", "periodo_local"], "left")
                .withColumn("kw_por_medidor", F.col("kwh_total") * 2 / F.col("n_lecturas"))
-               .withColumn("es_pico", F.coalesce(F.col("kw_por_medidor") > F.col("kw_p95"), F.lit(False)))
+               .withColumn("es_pico", F.coalesce(
+                   (F.col("kw_por_medidor") > F.col("kw_p95"))
+                   & F.hour(F.from_utc_timestamp("ts_utc", ZONA_LONDRES)).between(PUNTA_DESDE, PUNTA_HASTA),
+                   F.lit(False)))
                .cache())
         ctx.a_bigquery(res.select(
             F.col("ts_utc").alias("ventana_inicio"), "fecha", F.col("zona").cast("long"),
