@@ -56,3 +56,6 @@ site_libs/
 !book/mermaid.html
 
 **/*.quarto_ipynb
+
+# Archivos temporales de Office
+~$*
