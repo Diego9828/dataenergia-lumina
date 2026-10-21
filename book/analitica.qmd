@@ -1,0 +1,18 @@
+# Analítica, exposición y demo
+
+::: {.callout-note}
+## En construcción (Entrega 3, 20–21 de noviembre de 2026)
+Este capítulo se completa en la Fase 4. Abajo está lo planificado; el estado al día está en [Avance del proyecto](../docs/AVANCE.md).
+:::
+
+## Lo que cubrirá
+
+| Tema | Vertical del caso | Base ya construida |
+|---|---|---|
+| Pronóstico de demanda del día siguiente por zona y segmento | II · Planes diarios | `fact_carga_zona_30min`, clima DarkSky y NOAA, feriados |
+| Ranking de medidores defectuosos y zonas con sobrecarga recurrente | IV · Mantenimiento | `dq_medidor`, `fact_carga_transformador_30min`, alertas de `lumina_rt` |
+| Ahorro de la tarifa dinámica frente a la fija | III · Informes | `dim_hogar` (tarifa) y consumo por media hora |
+| Vistas `lumina_olap` que unen historia y hoy (sincronización 3 y 4) | III · Informes | `lumina_curated` y `lumina_rt` |
+| Tablero en Looker Studio | III · Informes | Vistas `lumina_olap` |
+| API REST en Cloud Run (consumo por hogar, alertas, pronóstico) | Exposición | BigQuery |
+| Demo end-to-end | Todas | Replay de la ola de frío |

@@ -1,0 +1,20 @@
+/*-- scss:defaults --*/
+// Colores de los diagramas del proyecto: batch azul, tiempo real rojo, almacenamiento ámbar, servicio violeta.
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
+
+$primary: #2F6FB3;
+$body-color: #142029;
+$font-family-sans-serif: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+$font-family-monospace: "JetBrains Mono", Consolas, monospace;
+$headings-font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+$headings-font-weight: 700;
+$link-color: #2F6FB3;
+$code-color: #8A3A21;
+
+/*-- scss:rules --*/
+h1, h2, h3 { letter-spacing: .01em; text-wrap: balance; }
+.quarto-title .title { font-size: 2.6rem; }
+table { font-size: .92rem; font-variant-numeric: tabular-nums; }
+pre.mermaid { background: transparent; text-align: center; }
+.part-label { color: #C8452B; }
+.flujo-marco { width: 100%; border: 1px solid #CBD5DB; border-radius: 12px; }

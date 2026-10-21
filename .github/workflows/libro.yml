@@ -1,0 +1,53 @@
+# Publica el libro (Quarto Book) en GitHub Pages en cada push a main.
+# En el repositorio: Settings → Pages → Source = "GitHub Actions".
+name: Publicar libro
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generar capítulos de la Parte I desde la sustentación
+        run: python book/extraer_entrega1.py
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.8.27
+
+      - name: Renderizar el libro
+        run: quarto render
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _book
+
+  publicar:
+    needs: construir
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - id: despliegue
+        uses: actions/deploy-pages@v4

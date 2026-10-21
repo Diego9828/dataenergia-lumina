@@ -1,0 +1,28 @@
+# Prefacio {.unnumbered}
+
+Este libro documenta, de punta a punta, la plataforma de datos que diseñamos e implementamos para **Lumina Energía**, la empresa que unifica a las distribuidoras eléctricas de una región metropolitana de 9 millones de clientes. Es el proyecto final del curso de Big Data de UTEC y está escrito como tutorial: cada capítulo explica qué se construyó, **por qué** se eligió cada componente y cómo verificarlo, con el código real del repositorio.
+
+## Resumen ejecutivo {.unnumbered}
+
+{{< include docs/entrega1/_e1_resumen.md >}}
+
+## Cómo leer este libro {.unnumbered}
+
+El libro sigue las tres entregas del curso:
+
+| Parte | Entrega | De qué trata |
+|---|---|---|
+| **I · Diseño** | 1 · Sustentación y blueprint | El caso, la arquitectura en cuatro capas, el patrón Lambda, el flujo de los datos (interactivo), los costos, la escalabilidad y la recuperación ante fallos |
+| **II · Construcción** | 2 · Pipelines y modelado | La puesta en marcha en Google Cloud, el batch con Spark, el streaming con Kafka, la sincronización entre ambos y la orquestación con Airflow |
+| **III · Exposición** | 3 · API, demo y sustentación | La analítica (pronóstico, mantenimiento predictivo, tarifas), las vistas OLAP, la API y la demo end-to-end |
+
+Si solo tienes cinco minutos, empieza por el capítulo [El flujo de una lectura](book/flujo.qmd): muestra con datos ficticios cómo viaja una lectura de medidor por toda la arquitectura.
+
+El estado de cada hito está en el apéndice [Avance del proyecto](docs/AVANCE.md).
+
+## Sobre este trabajo {.unnumbered}
+
+- **Autor:** Piero Palacios · Curso de Big Data, UTEC, 2026.
+- **Datos:** *Smart Meters in London* (Kaggle), demanda eléctrica nacional del Reino Unido (Kaggle) y NOAA GSOD (BigQuery público). No se usan datos personales: los medidores vienen seudonimizados.
+- **Código:** [github.com/pipaber/dataenergia-lumina](https://github.com/pipaber/dataenergia-lumina).
+- **Uso de IA:** el diseño, el código y los textos se elaboraron con asistencia de IA generativa (Claude). Las decisiones, cifras de costo y supuestos deben leerse como propuestas a validar.

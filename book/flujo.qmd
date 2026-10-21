@@ -1,0 +1,31 @@
+# El flujo de una lectura
+
+Este capítulo responde a la pregunta que más cuesta al leer una arquitectura Lambda: **¿por dónde pasa un dato, dónde queda guardado y cuándo pasa de provisional a definitivo?** Lo mostramos con tres hogares ficticios de la zona 3 durante una ola de frío.
+
+Avanza paso a paso con los botones o con las flechas del teclado. En el paso del miércoles, pulsa **▶ Reproducir** para ver llegar las lecturas una por una.
+
+```{=html}
+<iframe class="flujo-marco" src="flujo/flujo_lumina.html" height="1600" loading="lazy"
+        title="Recorrido interactivo del flujo de datos"></iframe>
+<p><a href="flujo/flujo_lumina.html" target="_blank" rel="noopener">Abrir el recorrido en una pestaña aparte</a></p>
+```
+
+## Lo que hay que llevarse
+
+| Dirección | Qué viaja | Punto de sincronización |
+|---|---|---|
+| Streaming → batch | **Datos:** cada lectura en vivo se guarda en bronze y el batch nocturno la consolida en `lumina_curated` | 1 |
+| Batch → streaming | **Reglas, no datos:** los perfiles y umbrales que aprendió el batch | 2 |
+| Batch y streaming → vistas | La historia definitiva del batch más lo de hoy del streaming; si difieren, **manda el batch** | 3 y 4 |
+
+El streaming sí escribe en bases de datos: en las **tablas** de `lumina_rt` (alertas y carga de hoy, provisionales) y en **bronze** (la copia cruda). Las vistas de `lumina_olap` no guardan nada: son consultas que leen ambas.
+
+## Reproducirlo en tu máquina
+
+El mismo ejemplo existe como script de Python que imprime cada tabla en cada paso, sin Spark ni Google Cloud:
+
+```bash
+python notebooks/flujo_dummy.py
+```
+
+Está en [notebooks/flujo_dummy.py](../notebooks/flujo_dummy.py). Los datos son ficticios; los nombres de tablas, scripts y reglas son los reales del proyecto, y en el [capítulo de streaming](../docs/03_streaming.md) se ve el mismo flujo con 1.8 millones de lecturas reales.

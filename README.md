@@ -12,7 +12,9 @@ Arquitectura Big Data para una red eléctrica inteligente (Smart Grid), desarrol
 **Estado del proyecto:** [docs/AVANCE.md](docs/AVANCE.md) (checklist de hitos por entrega).
 **Arquitectura técnica:** [docs/arquitectura_tecnica.md](docs/arquitectura_tecnica.md) (qué script corre dónde y para qué; caminos batch y tiempo real).
 
-El enunciado está en [docs/Taller_Arquitectura_BigData_DataEnergia.qmd](docs/Taller_Arquitectura_BigData_DataEnergia.qmd) y el plan de arquitectura, con la justificación técnica y económica, en [docs/00_plan_arquitectura.md](docs/00_plan_arquitectura.md).
+**Libro del proyecto:** [pipaber.github.io/dataenergia-lumina](https://pipaber.github.io/dataenergia-lumina/) (Quarto Book; el caso, la arquitectura y cada fase explicados paso a paso).
+
+El plan de arquitectura, con la justificación técnica y económica, en [docs/00_plan_arquitectura.md](docs/00_plan_arquitectura.md).
 
 ## Stack
 

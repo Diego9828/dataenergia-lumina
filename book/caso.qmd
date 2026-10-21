@@ -1,0 +1,36 @@
+# El caso: Lumina Energía
+
+## El problema
+
+Una región metropolitana de más de 9 millones de clientes depende de doce distribuidoras eléctricas que no comparten datos. La electrificación (climatización, cocinas de inducción, autos eléctricos) desplazó el consumo hacia zonas residenciales, y en la hora punta de la tarde la demanda supera holgadamente el promedio del día: los transformadores se sobrecargan y la red compra energía de emergencia a precios altos.
+
+Casi nueve de cada diez hogares ya tienen un **medidor inteligente** que reporta cada 30 minutos, pero esas lecturas solo se usan para facturar a fin de mes. Lumina Energía nace para unificar a las distribuidoras en una sola plataforma y usar esos datos para operar la red. Este proyecto responde a la parte de **back-end de datos** de esa plataforma.
+
+## Las cuatro verticales
+
+La arquitectura tiene que sostener cuatro usos de los datos, cada uno con un tipo de procesamiento distinto:
+
+| Vertical | Pregunta que responde | Procesamiento | Dónde se resuelve en este libro |
+|---|---|---|---|
+| **I · Decisiones en tiempo real** | ¿Hay un pico, una anomalía o un medidor caído *ahora*? | Streaming, segundos | [Streaming](../docs/03_streaming.md) |
+| **II · Planes diarios de demanda** | ¿Cuánto se consumirá mañana por zona y segmento? | Batch y pronóstico | Parte III |
+| **III · Informes operativos** | ¿Cuánto consume cada segmento? ¿Ahorran los clientes con tarifa dinámica? | Analítico (OLAP) | Parte III |
+| **IV · Mantenimiento y planificación** | ¿Qué medidores fallan? ¿Qué zonas se sobrecargan? | Predictivo | [Modelo de datos](../docs/02_modelo_datos.md) (`dq_medidor`) y Parte III |
+
+Además se evalúa que la arquitectura **escale** a otras regiones y a lecturas cada minuto, que **resista fallas** (un medidor o un concentrador que deja de enviar), que **exponga** los datos a las aplicaciones y que **justifique sus costos**.
+
+## Los datos
+
+| Dataset | Qué aporta | Volumen | Origen |
+|---|---|---|---|
+| Smart Meters in London | Lecturas cada 30 min de 5,566 hogares (nov-2011 a feb-2014), segmento socioeconómico Acorn, tarifa, clima DarkSky y feriados | 167.8 M lecturas, 9.6 GiB | [Kaggle · jeanmidev](https://www.kaggle.com/datasets/jeanmidev/smart-meters-in-london) |
+| Demanda nacional del Reino Unido | Demanda cada 30 min y generación eólica y solar embebida | 279 k filas | [Kaggle · albertovidalrod](https://www.kaggle.com/datasets/albertovidalrod/electricity-consumption-uk-20092022) |
+| NOAA GSOD | Clima diario observado en Heathrow | 1,461 días | BigQuery público (`bigquery-public-data.noaa_gsod`) |
+
+Como el dataset no trae ubicación, cada hogar se asigna de forma determinística a una de **8 zonas de concesión** y a uno de **112 transformadores** (unos 50 medidores cada uno). Es una geografía sintética declarada como supuesto.
+
+## Las reglas del taller
+
+- **Google Cloud con un tope de US$300** en créditos. El gasto real se registra en la [bitácora de costos](../docs/bitacora_costos.log); al cierre de la Parte II va en ≈ US$1.3.
+- **Código abierto primero:** Kafka, Spark, Airflow y Parquet, sobre servicios gestionados solo cuando son baratos (BigQuery, Cloud Storage, Spark serverless).
+- **Nada encendido sin uso:** cada recurso tiene un comando para apagarlo, y la infraestructura de tiempo real solo se enciende para probar o demostrar.

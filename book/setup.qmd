@@ -1,0 +1,41 @@
+# Puesta en marcha en Google Cloud
+
+La Fase 1 deja lista la base: control de gasto, el data lake, el warehouse y los datos crudos en la nube. Todo se hace con scripts de `infra/` que corren desde la laptop (Git Bash en Windows) y son **idempotentes**: volver a correrlos no duplica nada.
+
+## Paso a paso
+
+| Paso | Script | Qué crea | Costo |
+|---|---|---|---|
+| 1 | [`infra/01_apis_presupuesto.sh`](../infra/01_apis_presupuesto.sh) | APIs y un presupuesto de S/1,125 (≈ US$300) con alertas a ≈ US$50, 150 y 300 | US$0 |
+| 2 | [`infra/02_buckets_bigquery.sh`](../infra/02_buckets_bigquery.sh) | Buckets `raw` y `curated`, datasets `lumina_curated`, `lumina_rt`, `lumina_ml`, `lumina_olap`, `lumina_muestra` | ≈ US$0.30/mes |
+| 3 | [`infra/03_secreto_kaggle.sh`](../infra/03_secreto_kaggle.sh) | El token de Kaggle en Secret Manager (lo corre el dueño del token) | US$0 |
+| 4 | [`infra/04_ingesta_kaggle.sh`](../infra/04_ingesta_kaggle.sh) | Una VM temporal que descarga Kaggle a `raw/kaggle/` y se borra sola | ≈ US$0.01 |
+
+Toda la configuración vive en `infra/config.env`, que **no se versiona**: el repositorio trae la plantilla [`infra/config.example.env`](../infra/config.example.env).
+
+## Decisiones de esta fase
+
+- **El presupuesto va en soles.** La cuenta de facturación está en PEN y Google rechaza un presupuesto en otra moneda.
+- **BigQuery en la multirregión US, el lake en `us-central1`.** NOAA GSOD vive en BigQuery público (US) y BigQuery no cruza regiones; un dataset en US sí carga Parquet desde un bucket en `us-central1`.
+- **El token de Kaggle nunca toca el disco de la VM ni el repositorio.** Viaja por Secret Manager y la VM lo borra al terminar.
+- **La VM de ingesta tiene fecha de caducidad.** Se crea con `--max-run-duration 3h` y se borra sola aunque algo falle.
+- **Permisos mínimos.** Cada máquina usa su propia cuenta de servicio (`lumina-ingest`, `lumina-spark`, `lumina-ops`) con acceso solo a lo que necesita.
+
+## Resultado
+
+La capa raw quedó con **9.63 GiB** en `gs://<proyecto>-lumina-raw/kaggle/`: los 112 bloques de lecturas cada 30 minutos, los agregados diarios, los maestros, el clima y la demanda nacional 2009–2024. La descarga tomó unos 7 minutos dentro de GCP, sin usar el ancho de banda de la laptop.
+
+## Apagar y borrar
+
+```bash
+bash infra/shutdown.sh    # al final de cada sesión: apaga lo que cobra por hora
+bash infra/teardown.sh    # al final del curso: borra todo (pide confirmación)
+```
+
+## Problemas que aparecieron
+
+| Problema | Solución |
+|---|---|
+| En Git Bash, `gcloud` tomaba el alias `python3` de Microsoft Store | `_common.sh` usa el Python que trae el SDK |
+| La cuota del cliente compartido de `gcloud` se saturaba (`RESOURCE_EXHAUSTED`) | Las llamadas se facturan al proyecto propio con `CLOUDSDK_BILLING_QUOTA_PROJECT` |
+| En PowerShell, `bash` abre WSL y no Git Bash | Ejecutar los scripts desde Git Bash |

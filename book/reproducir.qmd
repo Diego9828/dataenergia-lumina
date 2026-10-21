@@ -1,0 +1,51 @@
+# Cómo reproducir el proyecto
+
+## Requisitos
+
+- Un proyecto de Google Cloud con facturación activa (créditos de prueba alcanzan) y la [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) autenticada.
+- Bash: en Windows, Git Bash. Python 3.10 o superior para el ejemplo dummy y la calculadora.
+- Una cuenta de Kaggle con su token de API.
+- Cuota de CPU: un batch de Spark serverless pide como mínimo 12 vCPU. Para tener a la vez la VM de streaming o de Airflow (4 vCPU) hace falta una cuota `CPUS_ALL_REGIONS` de al menos 16.
+
+## Secuencia
+
+```bash
+cp infra/config.example.env infra/config.env      # completar PROJECT_ID, BILLING_ACCOUNT, KAGGLE_API_TOKEN
+
+# Fase 1 · setup e ingesta
+bash infra/01_apis_presupuesto.sh
+bash infra/02_buckets_bigquery.sh
+bash infra/03_secreto_kaggle.sh
+bash infra/04_ingesta_kaggle.sh
+
+# Fase 2 · batch (primero una muestra barata, luego todo)
+bash infra/05_spark_batch.sh silver --muestra && bash infra/05_spark_batch.sh gold --muestra
+bash infra/06_cargar_bigquery.sh --muestra
+bash infra/05_spark_batch.sh silver && bash infra/05_spark_batch.sh gold
+bash infra/06_cargar_bigquery.sh
+
+# Fase 3 · streaming (enciende una VM: solo para probar o demostrar)
+bash infra/07_vm_ops.sh tablas
+bash infra/07_vm_ops.sh crear streaming
+bash infra/07_vm_ops.sh replay --desde 2013-01-14 --dias 7 --segundos-intervalo 1 \
+  --concentrador-caido Z3-T07 --caida-desde "2013-01-16 06:00:00" --anomalias 20
+bash infra/07_vm_ops.sh destruir
+```
+
+## Costos de referencia
+
+| Paso | Costo medido |
+|---|---|
+| Setup e ingesta | ≈ US$0.01 |
+| Batch completo (silver + gold, 167.8 M lecturas) | ≤ US$0.65 |
+| Sesión de streaming de 30 minutos | ≈ US$0.07 |
+| Almacenamiento (GCS + BigQuery) | ≈ US$0.35 por mes |
+
+## Construir este libro
+
+```bash
+quarto preview        # vista local con recarga automática
+quarto render         # genera el sitio en _book/
+```
+
+Los capítulos de la Parte I se generan desde `docs/entrega1/sustentacion_entrega1.qmd` con `book/extraer_entrega1.py`, que Quarto corre antes de renderizar. Cada `push` a `main` publica el libro en GitHub Pages con el workflow `.github/workflows/libro.yml`.

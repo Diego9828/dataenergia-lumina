@@ -1,0 +1,65 @@
+# Libro del proyecto (Quarto Book) publicado en GitHub Pages.
+#   Vista local:  quarto preview        Render:  quarto render   (sale en _book/)
+# Los capítulos de la Parte I se generan desde docs/entrega1/sustentacion_entrega1.qmd
+# con book/extraer_entrega1.py (pre-render), para que el Word y el libro digan lo mismo.
+project:
+  type: book
+  output-dir: _book
+  pre-render: book/extraer_entrega1.py
+  resources:
+    - book/flujo/*
+    - docs/**/*.png
+
+lang: es
+
+book:
+  title: "DataEnergía · Lumina"
+  subtitle: "Arquitectura Big Data para una red eléctrica inteligente en Google Cloud"
+  author: "Piero Palacios"
+  date: last-modified
+  date-format: "D [de] MMMM [de] YYYY"
+  repo-url: https://github.com/pipaber/dataenergia-lumina
+  repo-actions: [source, issue]
+  site-url: https://pipaber.github.io/dataenergia-lumina/
+  search: true
+  page-navigation: true
+  chapters:
+    - index.qmd
+    - part: "Parte I · Diseño (Entrega 1)"
+      chapters:
+        - book/caso.qmd
+        - docs/entrega1/_e1_arquitectura.qmd
+        - docs/entrega1/_e1_componentes.qmd
+        - book/flujo.qmd
+        - docs/entrega1/_e1_integracion.qmd
+        - docs/entrega1/_e1_escalabilidad.qmd
+        - docs/entrega1/_e1_economia.qmd
+        - docs/entrega1/_e1_resiliencia.qmd
+    - part: "Parte II · Construcción (Entrega 2)"
+      chapters:
+        - book/setup.qmd
+        - docs/02_modelo_datos.md
+        - docs/03_streaming.md
+        - docs/arquitectura_tecnica.md
+        - docs/04_orquestacion_airflow.md
+    - part: "Parte III · Exposición y demo (Entrega 3)"
+      chapters:
+        - book/analitica.qmd
+  appendices:
+    - docs/AVANCE.md
+    - book/reproducir.qmd
+    - docs/00_plan_arquitectura.md
+    - docs/entrega1/_e1_referencias.qmd
+
+filters:
+  - book/enlaces_repo.lua
+
+format:
+  html:
+    theme: [cosmo, book/estilo.scss]
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-copy: true
+    link-external-newwindow: true
+    include-after-body: book/mermaid.html

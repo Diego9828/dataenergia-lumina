@@ -65,7 +65,11 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ⬜ API REST en Cloud Run (consumo por hogar, alertas, pronóstico)
 - ⬜ Guion de demo end-to-end
 - ⬜ Slides con los 10 puntos del PDF (KPIs, calculadora, arquitectura, demo, conclusiones)
-- ⬜ Repositorio publicado en GitHub
+- ✅ Libro del proyecto (Quarto Book): 19 capítulos en 3 partes + apéndices, Parte I generada desde la sustentación, flujo interactivo incluido → `_quarto.yml`, `book/`
+- ✅ Workflow de GitHub Pages → `.github/workflows/libro.yml`
+- ✅ Enunciado del curso fuera del repo (copia en `bigdata utec/`)
+- 🟡 **Pendiente decisión del alumno:** el enunciado sigue en el historial del primer commit; limpiar historial antes de publicar
+- ⬜ Repositorio público en GitHub + libro en https://pipaber.github.io/dataenergia-lumina/
 
 ### Transversal
 - ✅ Repositorio con commits por avance; secretos fuera de git

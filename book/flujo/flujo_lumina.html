@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Copia de la página interactiva del flujo (también publicada como artifact). Datos ficticios. -->
+<style>:root{color-scheme:light} body{margin:0} img{max-width:100%} [hidden]{display:none!important}</style>
+<title>Flujo de una lectura · Lumina</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: diagrama unifilar arriba (sticky en escritorio), panel de datos por paso abajo; colores = los de los diagramas del repo */
+:root {
+  --bg: #F3F6F7;
+  --surface: #FFFFFF;
+  --ink: #142029;
+  --muted: #5A6B76;
+  --line: #CBD5DB;
+  --batch: #2F6FB3;
+  --batch-soft: #E3EEF9;
+  --stream: #C8452B;
+  --stream-soft: #FBE8E3;
+  --store: #B87A0B;
+  --store-soft: #FBF1DC;
+  --serve: #6B4FC4;
+  --serve-soft: #EEE9FA;
+  --kafka: #2E8B57;
+  --kafka-soft: #E2F3E9;
+  --ok: #2E7D4F;
+  --alert: #C8452B;
+  --font-display: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F171D; --surface: #17222A; --ink: #E4ECF1; --muted: #93A5B1; --line: #2C3B46;
+    --batch: #6FA6E6; --batch-soft: #17293B; --stream: #F07A5F; --stream-soft: #3A1E18;
+    --store: #E2A93B; --store-soft: #33280F; --serve: #A28EF0; --serve-soft: #241D3B;
+    --kafka: #5CC08A; --kafka-soft: #15301F; --ok: #5CC08A; --alert: #F07A5F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F171D; --surface: #17222A; --ink: #E4ECF1; --muted: #93A5B1; --line: #2C3B46;
+  --batch: #6FA6E6; --batch-soft: #17293B; --stream: #F07A5F; --stream-soft: #3A1E18;
+  --store: #E2A93B; --store-soft: #33280F; --serve: #A28EF0; --serve-soft: #241D3B;
+  --kafka: #5CC08A; --kafka-soft: #15301F; --ok: #5CC08A; --alert: #F07A5F;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+}
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px;
+}
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(32px, 5vw, 48px); line-height: 1.05; margin: 0; text-wrap: balance; }
+.lede { margin: 0; max-width: 68ch; color: var(--muted); }
+
+/* --------- stepper */
+.steps { display: flex; flex-wrap: wrap; gap: 8px; }
+.steps button {
+  font: 600 14px/1.2 var(--font-body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer;
+  display: inline-flex; gap: 8px; align-items: center;
+}
+.steps button .n { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.steps button[aria-current="step"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.steps button[aria-current="step"] .n { color: var(--bg); opacity: .7; }
+.steps button:focus-visible, .ctrl:focus-visible { outline: 3px solid var(--batch); outline-offset: 2px; }
+
+/* --------- diagrama */
+.diagram-box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; overflow-x: auto; }
+svg.dia { display: block; width: 100%; min-width: 760px; height: auto; }
+.node rect { stroke-width: 1.5; transition: opacity .3s, stroke-width .3s; }
+.node text { font-family: var(--font-body); font-size: 13px; fill: var(--ink); }
+.node .t1 { font-weight: 700; }
+.node .t2 { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+.node.off { opacity: .28; }
+.node.on rect { stroke-width: 3; }
+.edge path { fill: none; stroke: var(--line); stroke-width: 2; transition: stroke .3s, opacity .3s; }
+.edge.on path { stroke-width: 3; stroke-dasharray: 8 6; animation: flow 1s linear infinite; }
+.edge.off { opacity: .35; }
+.edge text { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+.edge.on text { fill: var(--ink); font-weight: 600; }
+.edge .badge circle { stroke: none; }
+.edge .badge text { font-family: var(--font-display); font-weight: 700; font-size: 13px; fill: var(--surface); text-anchor: middle; dominant-baseline: central; }
+@keyframes flow { to { stroke-dashoffset: -14; } }
+@media (prefers-reduced-motion: reduce) { .edge.on path { animation: none; } }
+.lane-label { font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
+
+/* --------- panel */
+.panel { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
+@media (max-width: 820px) { .panel { grid-template-columns: minmax(0, 1fr); } }
+.story { display: grid; gap: 10px; min-width: 0; }
+.when { font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.story h2 { font-family: var(--font-display); font-size: 30px; line-height: 1.1; margin: 0; text-wrap: balance; }
+.story p { margin: 0; max-width: 60ch; }
+.story ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.sync { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--serve-soft); color: var(--serve); font-weight: 600; }
+.nav { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.ctrl {
+  font: 600 14px/1 var(--font-body); padding: 10px 16px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+}
+.ctrl.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.ctrl:disabled { opacity: .4; cursor: default; }
+.data { display: grid; gap: 14px; min-width: 0; }
+
+/* almacenamiento */
+.stores { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.store { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+.store .k { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.store .v { font-family: var(--font-display); font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.store .s { font-size: 12.5px; color: var(--muted); }
+.store.batch { border-left: 4px solid var(--batch); }
+.store.stream { border-left: 4px solid var(--stream); }
+.store.serve { border-left: 4px solid var(--serve); }
+.store.bump .v { animation: bump .5s ease; }
+@keyframes bump { 40% { transform: scale(1.15); } }
+@media (prefers-reduced-motion: reduce) { .store.bump .v { animation: none; } }
+
+/* tablas */
+.tcard { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.tcard h3 { margin: 0; padding: 8px 12px; font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.tcard h3 .tag { font-family: var(--font-body); font-weight: 600; font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+.tag.batch { background: var(--batch-soft); color: var(--batch); }
+.tag.stream { background: var(--stream-soft); color: var(--stream); }
+.tag.serve { background: var(--serve-soft); color: var(--serve); }
+.tag.store { background: var(--store-soft); color: var(--store); }
+.tscroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+tr:last-child td { border-bottom: none; }
+td.num { text-align: right; }
+tr.new td { animation: rowin .6s ease; }
+@keyframes rowin { from { background: var(--store-soft); } }
+@media (prefers-reduced-motion: reduce) { tr.new td { animation: none; } }
+.chip { font-family: var(--font-body); font-weight: 700; font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+.chip.ok { color: var(--ok); background: transparent; border: 1px solid var(--ok); }
+.chip.bad { color: var(--surface); background: var(--alert); }
+.raw { color: var(--stream); }
+.muted { color: var(--muted); }
+
+footer { font-size: 13px; color: var(--muted); display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 14px; }
+footer code { font-family: var(--font-mono); font-size: 12px; }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">DataEnergía · Lumina · arquitectura Lambda · datos ficticios</div>
+    <h1>Flujo de una lectura, del medidor a la vista</h1>
+    <p class="lede">Tres hogares de la zona 3 y una ola de frío. Avanza paso a paso para ver dónde se guarda cada dato, quién lo procesa y cuándo pasa de provisional a definitivo.</p>
+  </header>
+
+  <nav class="steps" id="steps" aria-label="Pasos del flujo"></nav>
+
+  <div class="diagram-box">
+    <svg class="dia" id="dia" viewBox="0 0 980 330" role="img" aria-label="Diagrama de la arquitectura Lambda con el paso activo resaltado">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"></path>
+        </marker>
+      </defs>
+      <text class="lane-label" x="300" y="22" fill="var(--batch)">Capa batch · cada noche</text>
+      <text class="lane-label" x="300" y="318" fill="var(--stream)">Capa de velocidad · en segundos</text>
+      <text class="lane-label" x="822" y="118" fill="var(--serve)">Capa de servicio</text>
+      <g id="edges"></g>
+      <g id="nodes"></g>
+    </svg>
+  </div>
+
+  <section class="panel">
+    <div class="story" id="story"></div>
+    <div class="data" id="data"></div>
+  </section>
+
+  <footer>
+    <div>Datos ficticios para explicar el flujo; es el mismo ejemplo que <code>notebooks/flujo_dummy.py</code> del repositorio. Los nombres de tablas y scripts son los reales del proyecto.</div>
+    <div>Página elaborada con asistencia de IA generativa (Claude).</div>
+  </footer>
+</div>
+
+<script>
+// ------------------------------------------------------------------ diagrama
+const NODES = {
+  med:   { x: 20,  y: 210, w: 120, h: 58, c: "--kafka",  f: "--kafka-soft",  t1: "Medidores", t2: "cada 30 min" },
+  maes:  { x: 20,  y: 40,  w: 120, h: 58, c: "--muted",  f: "--bg",          t1: "Clima, maestros", t2: "1 vez al día" },
+  kafka: { x: 175, y: 210, w: 110, h: 58, c: "--kafka",  f: "--kafka-soft",  t1: "Kafka", t2: "meter.readings" },
+  ss:    { x: 330, y: 210, w: 150, h: 58, c: "--stream", f: "--stream-soft", t1: "Spark Streaming", t2: "streaming_job.py" },
+  rt:    { x: 560, y: 210, w: 150, h: 58, c: "--store",  f: "--store-soft",  t1: "lumina_rt", t2: "TABLAS · provisional" },
+  bronze:{ x: 300, y: 40,  w: 140, h: 58, c: "--store",  f: "--store-soft",  t1: "Bronze (GCS)", t2: "raw/kaggle + streaming" },
+  batch: { x: 475, y: 40,  w: 140, h: 58, c: "--batch",  f: "--batch-soft",  t1: "Spark batch", t2: "silver.py · gold.py" },
+  cur:   { x: 650, y: 40,  w: 150, h: 58, c: "--store",  f: "--store-soft",  t1: "lumina_curated", t2: "definitivo + perfiles" },
+  vista: { x: 822, y: 130, w: 145, h: 70, c: "--serve",  f: "--serve-soft",  t1: "Vista lumina_olap", t2: "CONSULTA, no guarda" },
+};
+const EDGES = {
+  med_kafka:  { d: "M140,239 L175,239" },
+  kafka_ss:   { d: "M285,239 L330,239" },
+  ss_rt:      { d: "M480,239 L560,239", label: "alertas", lx: 492, ly: 230 },
+  ss_bronze:  { d: "M370,210 C370,160 370,140 370,98", label: "datos", lx: 300, ly: 160, badge: 1, bx: 370, by: 150, col: "--stream" },
+  maes_bronze:{ d: "M140,69 L300,69" },
+  bronze_batch:{ d: "M440,69 L475,69" },
+  batch_cur:  { d: "M615,69 L650,69" },
+  cur_ss:     { d: "M690,98 C690,170 520,175 455,210", label: "reglas", lx: 600, ly: 196, badge: 2, bx: 660, by: 168, col: "--batch", dash: true },
+  cur_vista:  { d: "M800,69 C850,69 880,90 890,130", label: "definitivo", lx: 838, ly: 88, badge: 3, bx: 868, by: 104, col: "--serve" },
+  rt_vista:   { d: "M710,239 C860,239 890,225 890,200", label: "provisional", lx: 735, ly: 230, badge: 3, bx: 860, by: 236, col: "--serve" },
+};
+const svgNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(svgNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+const gNodes = document.getElementById("nodes"), gEdges = document.getElementById("edges");
+for (const [id, e] of Object.entries(EDGES)) {
+  const g = el("g", { class: "edge", id: "e-" + id }, gEdges);
+  el("path", { d: e.d, "marker-end": "url(#arrow)", ...(e.dash ? { "stroke-dasharray": "3 5" } : {}) }, g);
+  if (e.label) { const t = el("text", { x: e.lx, y: e.ly }, g); t.textContent = e.label; }
+  if (e.badge) {
+    const b = el("g", { class: "badge" }, g);
+    el("circle", { cx: e.bx, cy: e.by, r: 11, fill: `var(${e.col})` }, b);
+    const t = el("text", { x: e.bx, y: e.by }, b); t.textContent = e.badge;
+  }
+}
+for (const [id, n] of Object.entries(NODES)) {
+  const g = el("g", { class: "node", id: "n-" + id }, gNodes);
+  el("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 9, fill: `var(${n.f})`, stroke: `var(${n.c})` }, g);
+  const t1 = el("text", { x: n.x + n.w / 2, y: n.y + n.h / 2 - 4, "text-anchor": "middle", class: "t1" }, g); t1.textContent = n.t1;
+  const t2 = el("text", { x: n.x + n.w / 2, y: n.y + n.h / 2 + 14, "text-anchor": "middle", class: "t2" }, g); t2.textContent = n.t2;
+}
+function light(nodes, edges) {
+  for (const id of Object.keys(NODES)) document.getElementById("n-" + id).setAttribute("class", "node " + (nodes.includes(id) ? "on" : "off"));
+  for (const id of Object.keys(EDGES)) {
+    const g = document.getElementById("e-" + id);
+    g.setAttribute("class", "edge " + (edges.includes(id) ? "on" : "off"));
+    const p = g.querySelector("path");
+    if (edges.includes(id)) p.style.stroke = `var(${EDGES[id].col || "--ink"})`; else p.style.stroke = "";
+  }
+}
+
+// ------------------------------------------------------------------ datos ficticios
+const PERFIL = {  // umbral = max(4 × máximo histórico, 1.5) en el ejemplo; en el real max(4×p95, media+8σ, 1.5)
+  "MAC-A": { "18:00": [0.37, 1.56], "18:30": [0.42, 1.76], "19:00": [0.44, 1.84], "19:30": [0.40, 1.68] },
+  "MAC-B": { "18:00": [0.21, 1.50], "18:30": [0.23, 1.50], "19:00": [0.27, 1.50], "19:30": [0.22, 1.50] },
+  "MAC-C": { "18:00": [0.32, 1.50], "18:30": [0.35, 1.50], "19:00": [0.33, 1.50], "19:30": [0.31, 1.50] },
+};
+const EN_VIVO = [
+  ["18:00", "MAC-A", 0.41], ["18:00", "MAC-B", 0.24], ["18:00", "MAC-C", 0.32],
+  ["18:30", "MAC-A", 4.10], ["18:30", "MAC-B", 0.26],
+  ["19:00", "MAC-A", 0.43], ["19:00", "silencio", "MAC-C"], ["19:00", "MAC-B", 0.27],
+  ["19:30", "MAC-A", 0.40], ["19:30", "MAC-B", 0.23],
+];
+
+function table(title, tag, tagText, head, rows, newFrom = Infinity) {
+  const th = head.map(h => `<th>${h}</th>`).join("");
+  const tr = rows.map((r, i) => `<tr class="${i >= newFrom ? "new" : ""}">${r.map(c => `<td${typeof c === "number" ? ' class="num"' : ""}>${typeof c === "number" ? c.toFixed(2) : c}</td>`).join("")}</tr>`).join("");
+  return `<div class="tcard"><h3><span>${title}</span><span class="tag ${tag}">${tagText}</span></h3><div class="tscroll"><table><thead><tr>${th}</tr></thead><tbody>${tr || `<tr><td class="muted" colspan="${head.length}">vacía</td></tr>`}</tbody></table></div></div>`;
+}
+function stores(s, bumped = []) {
+  const card = (k, cls, label, v, sub) => `<div class="store ${cls} ${bumped.includes(k) ? "bump" : ""}"><span class="k">${label}</span><span class="v">${v}</span><span class="s">${sub}</span></div>`;
+  return `<div class="stores">
+    ${card("cur", "batch", "lumina_curated.fact_consumo_30min", s.cur, "filas definitivas")}
+    ${card("bronze", "stream", "raw/streaming (bronze)", s.bronze, "lecturas en vivo copiadas")}
+    ${card("rt", "stream", "lumina_rt.alertas", s.rt, "alertas provisionales")}
+  </div>`;
+}
+const ok = '<span class="chip ok">normal</span>';
+const bad = t => `<span class="chip bad">${t}</span>`;
+
+// ------------------------------------------------------------------ pasos
+let live = { i: 0, timer: null };
+function liveState() {
+  const ev = EN_VIVO.slice(0, live.i);
+  const lect = ev.filter(e => e[1] !== "silencio");
+  const alerts = [];
+  for (const [h, id, v] of ev) {
+    if (id === "silencio") alerts.push(["18:00", "medidor_silencioso", v, "—", "—"]);
+    else if (v > PERFIL[id][h][1]) alerts.push([h, "consumo_anomalo", id, v, PERFIL[id][h][1]]);
+  }
+  return { ev, lect, alerts };
+}
+
+const STEPS = [
+  {
+    nav: "Fuentes",
+    nodes: ["med", "maes"], edges: [],
+    render: () => ({
+      story: `<div class="when">Antes de empezar</div>
+        <h2>Dos tipos de fuente, dos ritmos</h2>
+        <p>Los <b>medidores</b> mandan una lectura cada 30 minutos, todo el día: eso es un flujo. El <b>clima y los maestros</b> de hogares cambian poco y llegan por lotes.</p>
+        <p>La arquitectura Lambda les da un camino a cada uno y luego los junta.</p>`,
+      data: table("Maestro de hogares", "store", "batch", ["lclid", "tarifa", "acorn", "transformador"],
+        [["MAC-A", "ToU", "ACORN-E", "Z3-T02"], ["MAC-B", "Std", "ACORN-Q", "Z3-T07"], ["MAC-C", "Std", "ACORN-Q", "Z3-T07"]])
+        + table("Clima diario", "store", "batch", ["fecha", "temp_max_c"], [["2013-01-14", "2.9"], ["2013-01-15", "2.4"], ["2013-01-16", "−0.1"]]),
+    }),
+  },
+  {
+    nav: "Martes 02:00 · batch",
+    nodes: ["maes", "bronze", "batch", "cur"], edges: ["maes_bronze", "bronze_batch", "batch_cur"],
+    render: () => ({
+      story: `<div class="when">Martes 02:00 · capa batch</div>
+        <h2>El batch aprende qué es normal</h2>
+        <p>Toma la historia (lunes y martes) desde bronze, la limpia y la cruza con las otras fuentes.</p>
+        <ul>
+          <li><b>Bronze</b>: tal cual llegó, con espacios, <span class="raw">Null</span> y horas raras.</li>
+          <li><b>Silver</b>: tipado y con banderas de calidad.</li>
+          <li><b>Gold</b>: el perfil de cada hogar, que serán las <b>reglas</b> del streaming.</li>
+        </ul>`,
+      data: stores({ cur: 24, bronze: 0, rt: 0 }, ["cur"])
+        + table("bronze · raw/kaggle", "store", "tal cual llegó", ["lclid", "tstp", "kwh_txt"],
+          [["MAC-A", "2013-01-15 18:30:00.0000000", '<span class="raw">" 0.46 "</span>'], ["MAC-B", "2013-01-15 18:13:41.0000000", '<span class="raw">Null</span>']])
+        + table("silver", "batch", "limpio", ["lclid", "ts_utc", "kwh", "fuera_de_grilla"],
+          [["MAC-A", "2013-01-15 18:30", 0.46, "false"], ["MAC-B", "2013-01-15 18:13", "—", '<b>true</b> → no pasa a gold']])
+        + table("lumina_curated.perfil_hogar · MAC-A", "batch", "reglas", ["hora", "kwh_media", "umbral"],
+          [["18:00", 0.37, 1.56], ["18:30", 0.42, 1.76], ["19:00", 0.44, 1.84], ["19:30", 0.40, 1.68]]),
+    }),
+  },
+  {
+    nav: "Miércoles · streaming en vivo",
+    nodes: ["med", "kafka", "ss", "rt", "bronze", "cur"], edges: ["med_kafka", "kafka_ss", "ss_rt", "ss_bronze", "cur_ss"],
+    live: true,
+    render: () => {
+      const { ev, lect, alerts } = liveState();
+      const ticker = ev.map(([h, id, v]) => id === "silencio"
+        ? [h, "—", "—", "—", bad("medidor_silencioso: " + v)]
+        : [h, id, v, PERFIL[id][h][1], v > PERFIL[id][h][1] ? bad("consumo_anomalo") : ok]);
+      const fin = live.i >= EN_VIVO.length;
+      return {
+        story: `<div class="when">Miércoles 16-ene · 18:00 a 19:30 · capa de velocidad</div>
+          <h2>El streaming evalúa cada lectura en segundos</h2>
+          <p>Cada lectura entra por Kafka y Spark Streaming hace <b>dos cosas</b> con ella:</p>
+          <ul>
+            <li>La compara con la regla de su hogar <span class="sync">2 reglas</span> y, si se pasa, guarda una alerta en <b>lumina_rt</b>.</li>
+            <li>Guarda una copia cruda en <b>bronze</b> <span class="sync">1 datos</span> para que el batch la use esta noche.</li>
+          </ul>
+          <p class="muted">MAC-C deja de enviar después de las 18:00: su concentrador se cayó.</p>
+          <div class="nav">
+            <button class="ctrl primary" id="play">${live.timer ? "Pausar" : fin ? "Repetir" : live.i ? "Continuar" : "▶ Reproducir"}</button>
+            <button class="ctrl" id="tick" ${fin ? "disabled" : ""}>Siguiente lectura</button>
+          </div>`,
+        data: stores({ cur: 24, bronze: lect.length, rt: alerts.length }, live.lastBump || [])
+          + table("Lecturas llegando a Kafka", "stream", "en vivo", ["hora", "lclid", "kWh", "umbral", "resultado"], ticker, ticker.length - 1)
+          + table("lumina_rt.alertas", "stream", "TABLA provisional", ["hora", "tipo", "lclid", "valor", "umbral"], alerts, alerts.length - 1)
+          + table("raw/streaming (bronze)", "store", "copia cruda", ["lclid", "ts_utc", "kWh"], lect.map(([h, id, v]) => [id, "2013-01-16 " + h, v]), lect.length - 1),
+      };
+    },
+  },
+  {
+    nav: "Qué quedó guardado",
+    nodes: ["rt", "bronze", "cur"], edges: [],
+    render: () => ({
+      story: `<div class="when">Miércoles 20:00</div>
+        <h2>El streaming sí guarda datos, en dos lugares</h2>
+        <ul>
+          <li><b>lumina_rt</b> (tablas en BigQuery): las alertas de hoy, disponibles al instante.</li>
+          <li><b>raw/streaming</b> (bronze en GCS): cada lectura cruda, para el batch.</li>
+        </ul>
+        <p><b>lumina_curated</b> todavía no tiene el miércoles: el batch no ha corrido.</p>`,
+      data: stores({ cur: 24, bronze: 9, rt: 2 })
+        + table("¿Dónde está la lectura de MAC-A de las 18:30?", "store", "4.10 kWh", ["lugar", "tipo", "estado"],
+          [["Kafka meter.readings", "log, 7 días", "de paso"], ["lumina_rt.alertas", "tabla BigQuery", "alerta provisional"], ["raw/streaming", "Parquet en GCS", "crudo, esperando al batch"], ["lumina_curated", "tabla BigQuery", '<span class="muted">aún no está</span>']]),
+    }),
+  },
+  {
+    nav: "Miércoles 22:00 · vista",
+    nodes: ["cur", "rt", "vista"], edges: ["cur_vista", "rt_vista"],
+    render: () => ({
+      story: `<div class="when">Miércoles 22:00 · capa de servicio</div>
+        <h2>La vista une historia y hoy</h2>
+        <p>La vista no guarda nada: es una consulta. Toma <b>hasta ayer</b> de lumina_curated y <b>hoy</b> de lo que dejó el streaming <span class="sync">3 unión</span>.</p>
+        <p>El miércoles se ve con 9 lecturas: faltan las de MAC-C, que nunca llegaron.</p>`,
+      data: table("Consumo por día en la vista", "serve", "consulta", ["fecha", "fuente", "lecturas", "kWh"],
+        [["lunes 14", "batch · definitivo", "12", 3.66], ["martes 15", "batch · definitivo", "12", 4.03], ["<b>miércoles 16</b>", '<b>streaming · provisional</b>', "<b>9</b>", 6.66]]),
+    }),
+  },
+  {
+    nav: "Jueves 02:00 · manda el batch",
+    nodes: ["bronze", "batch", "cur", "vista", "ss"], edges: ["bronze_batch", "batch_cur", "cur_vista", "cur_ss"],
+    render: () => ({
+      story: `<div class="when">Jueves 02:00 · capa batch</div>
+        <h2>El batch consolida y manda</h2>
+        <p>A las 08:15 del miércoles el concentrador volvió y reenvió 3 lecturas atrasadas de MAC-C, que quedaron en bronze. El streaming nunca las vio.</p>
+        <ul>
+          <li>El batch procesa el miércoles completo desde bronze: <b>12 lecturas</b>, definitivas en lumina_curated.</li>
+          <li>La vista ahora toma el miércoles del batch <span class="sync">4 manda el batch</span>.</li>
+          <li>El batch recalcula perfiles con el miércoles y el streaming los recarga <span class="sync">2 reglas</span>. El ciclo sigue.</li>
+        </ul>`,
+      data: stores({ cur: 36, bronze: 12, rt: 2 }, ["cur", "bronze"])
+        + table("Consumo por día en la vista", "serve", "consulta", ["fecha", "fuente", "lecturas", "kWh"],
+          [["lunes 14", "batch · definitivo", "12", 3.66], ["martes 15", "batch · definitivo", "12", 4.03], ["<b>miércoles 16</b>", "<b>batch · definitivo</b>", "<b>12</b>", 7.63]], 2)
+        + table("Lecturas atrasadas de MAC-C (llegaron a bronze)", "store", "08:15", ["lclid", "ts_utc", "kWh"],
+          [["MAC-C", "2013-01-16 18:30", 0.34], ["MAC-C", "2013-01-16 19:00", 0.33], ["MAC-C", "2013-01-16 19:30", 0.30]]),
+    }),
+  },
+];
+
+let current = 0;
+function stopLive() { if (live.timer) { clearInterval(live.timer); live.timer = null; } }
+function stepLive() {
+  if (live.i >= EN_VIVO.length) { stopLive(); render(); return; }
+  live.i += 1;
+  const e = EN_VIVO[live.i - 1];
+  live.lastBump = e[1] === "silencio" ? ["rt"] : ["bronze", ...(e[2] > PERFIL[e[1]][e[0]][1] ? ["rt"] : [])];
+  if (live.i >= EN_VIVO.length) stopLive();
+  render();
+}
+function render() {
+  const s = STEPS[current];
+  light(s.nodes, s.edges);
+  const out = s.render();
+  document.getElementById("story").innerHTML = out.story + `
+    <div class="nav">
+      <button class="ctrl" id="prev" ${current === 0 ? "disabled" : ""}>← Anterior</button>
+      <button class="ctrl" id="next" ${current === STEPS.length - 1 ? "disabled" : ""}>Siguiente paso →</button>
+    </div>`;
+  document.getElementById("data").innerHTML = out.data;
+  document.querySelectorAll("#steps button").forEach((b, i) => b.setAttribute("aria-current", i === current ? "step" : "false"));
+  document.getElementById("prev").onclick = () => go(current - 1);
+  document.getElementById("next").onclick = () => go(current + 1);
+  if (s.live) {
+    document.getElementById("play").onclick = () => {
+      if (live.timer) { stopLive(); render(); return; }
+      if (live.i >= EN_VIVO.length) { live.i = 0; live.lastBump = []; }
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      live.timer = setInterval(stepLive, reduce ? 1500 : 1100);
+      stepLive();
+    };
+    document.getElementById("tick").onclick = () => { stopLive(); stepLive(); };
+  }
+  live.lastBump = [];
+}
+function go(i) {
+  if (i < 0 || i >= STEPS.length) return;
+  stopLive();
+  if (STEPS[i].live && current !== i) { live.i = 0; }
+  current = i;
+  try { localStorage.setItem("flujo-paso", String(i)); } catch (e) {}
+  render();
+}
+const nav = document.getElementById("steps");
+STEPS.forEach((s, i) => {
+  const b = document.createElement("button");
+  b.id = "paso-" + i;
+  b.innerHTML = `<span class="n">${i + 1}</span>${s.nav}`;
+  b.onclick = () => go(i);
+  nav.appendChild(b);
+});
+document.addEventListener("keydown", e => {
+  if (e.target.closest("button") && (e.key === " " || e.key === "Enter")) return;
+  if (e.key === "ArrowRight") go(current + 1);
+  if (e.key === "ArrowLeft") go(current - 1);
+});
+// El paso en vivo abre con 4 lecturas ya llegadas, para que la página se vea completa al cargar.
+live.i = 0;
+let inicial = 0;
+try { inicial = Math.min(STEPS.length - 1, Math.max(0, parseInt(localStorage.getItem("flujo-paso") || "0", 10) || 0)); } catch (e) {}
+current = inicial;
+if (STEPS[current].live) live.i = 4;
+render();
+</script>
+
+</body>
+</html>
