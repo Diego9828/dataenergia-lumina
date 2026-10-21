@@ -2,7 +2,7 @@
 
 Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 
-**Actualizado:** 2026-10-20 · **Costo acumulado:** ≈ US$1.3 de US$300 · **Recursos encendidos:** ninguno
+**Actualizado:** 2026-10-21 · **Costo acumulado:** ≈ US$1.3 de US$300 · **Recursos encendidos:** ninguno
 
 ## Resumen por entrega
 
@@ -10,7 +10,7 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 |---|---|---|---|
 | 1 · Sustentación + blueprint | 24-oct-2026 | 🟡 | Revisión y envío del documento (alumno) |
 | 2 · Pipelines y modelado | 07-nov-2026 | 🟡 | Corrida del DAG de Airflow con Spark (bloqueada por cuota de CPU) |
-| 3 · API, demo y sustentación | 20/21-nov-2026 | ⬜ | Fase 4, API, Looker Studio, slides, GitHub |
+| 3 · API, demo y sustentación | 20/21-nov-2026 | ⬜ | Fase 4, API, Looker Studio, slides (repo y libro ya publicados) |
 
 ## Hitos
 
@@ -68,8 +68,8 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ✅ Libro del proyecto (Quarto Book): 19 capítulos en 3 partes + apéndices, Parte I generada desde la sustentación, flujo interactivo incluido → `_quarto.yml`, `book/`
 - ✅ Workflow de GitHub Pages → `.github/workflows/libro.yml`
 - ✅ Enunciado del curso fuera del repo (copia en `bigdata utec/`)
-- 🟡 **Pendiente decisión del alumno:** el enunciado sigue en el historial del primer commit; limpiar historial antes de publicar
-- ⬜ Repositorio público en GitHub + libro en https://pipaber.github.io/dataenergia-lumina/
+- ✅ Historial limpio: el enunciado no está en ningún commit publicado (respaldo local en `backup/antes-de-quitar-enunciado`)
+- ✅ Repositorio público → https://github.com/pipaber/dataenergia-lumina · libro → https://pipaber.github.io/dataenergia-lumina/ (se republica en cada push a `main`)
 
 ### Transversal
 - ✅ Repositorio con commits por avance; secretos fuera de git
