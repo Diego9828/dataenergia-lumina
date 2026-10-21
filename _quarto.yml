@@ -44,7 +44,7 @@ book:
         - docs/04_orquestacion_airflow.md
     - part: "Parte III · Exposición y demo (Entrega 3)"
       chapters:
-        - book/analitica.qmd
+        - docs/05_analitica.md
   appendices:
     - docs/AVANCE.md
     - book/reproducir.qmd

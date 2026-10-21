@@ -2,15 +2,15 @@
 
 Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 
-**Actualizado:** 2026-10-21 · **Costo acumulado:** ≈ US$1.3 de US$300 · **Recursos encendidos:** ninguno
+**Actualizado:** 2026-10-21 · **Costo acumulado:** ≈ US$1.7 de US$300 · **Recursos encendidos:** ninguno
 
 ## Resumen por entrega
 
 | Entrega | Fecha | Estado | Falta |
 |---|---|---|---|
 | 1 · Sustentación + blueprint | 24-oct-2026 | 🟡 | Revisión y envío del documento (alumno) |
-| 2 · Pipelines y modelado | 07-nov-2026 | 🟡 | Corrida del DAG de Airflow con Spark (bloqueada por cuota de CPU) |
-| 3 · API, demo y sustentación | 20/21-nov-2026 | ⬜ | Fase 4, API, Looker Studio, slides (repo y libro ya publicados) |
+| 2 · Pipelines y modelado | 07-nov-2026 | 🟡 | Corrida del DAG de Airflow con Spark (cuota ya en 24 vCPU; falta encender la VM) |
+| 3 · API, demo y sustentación | 20/21-nov-2026 | 🟡 | Despliegue de la API, mantenimiento predictivo, Looker Studio, demo y slides (vistas, tarifas y pronóstico listos) |
 
 ## Hitos
 
@@ -47,22 +47,26 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ✅ Patrón definido y documentado (Lambda, no Kappa), con diagrama → [arquitectura_tecnica.md](arquitectura_tecnica.md#batch-y-streaming-arquitectura-lambda)
 - 🟡 1 · Lectura en vivo → bronze: consulta `bronze` en `streaming_job.py` y consolidación en `silver.py` implementadas; falta probarlas en vivo
 - 🟡 2 · Perfiles y umbrales → streaming: recarga cada 24 h (`Contexto.refrescar()`) implementada; falta probarla en vivo
-- ⬜ 3 · Vistas que unen historia (`curated`) y hoy (`rt`) en `lumina_olap` (Fase 4)
-- ⬜ 4 · Reconciliación: de `rt` solo lo posterior al último batch; manda el batch (Fase 4)
+- ✅ 3 · Vistas que unen historia (`curated`) y hoy (`rt`) en `lumina_olap` → `src/sql/olap_vistas.sql`
+- ✅ 4 · Reconciliación: de `rt` solo lo posterior al último batch; manda el batch (regla en `v_carga_zona_30min`)
 
 ### Orquestación · Airflow (camino batch, no tiempo real)
 - ✅ DAG `lumina_batch_diario`: sensor → silver → gold → 13 cargas → derivadas → 3 controles → `src/dags/`
 - ✅ Airflow en la VM, el DAG carga sin errores y el sensor pasa → [04_orquestacion_airflow.md](04_orquestacion_airflow.md)
-- 🟡 **Bloqueado:** la cuota `CPUS_ALL_REGIONS` = 12 no permite VM (4) + Spark serverless (12). Decisión del alumno: subir la cuota a 16 o 24, o correr Airflow en la laptop
+- ✅ Cuota `CPUS_ALL_REGIONS` subida de 12 a 24 vCPU (alcanza para VM 4 + Spark serverless 16)
+- ⬜ Corrida del DAG con Spark en el próximo encendido
 
 ### Fase 4 · Analítica (para la Entrega 3)
-- ⬜ Pronóstico de demanda D+1 por zona y segmento
-- ⬜ Mantenimiento predictivo: ranking de medidores defectuosos y zonas con sobrecarga (base: `dq_medidor`)
-- ⬜ Ahorro de tarifa dinámica vs. fija (calendario dToU 2013)
-- ⬜ Vistas OLAP en `lumina_olap` + tablero en Looker Studio
+Detalle y resultados → [05_analitica.md](05_analitica.md)
+- ✅ Calendario oficial dToU 2013 (17,520 medias horas) en `dim_tarifa_dtou` → `infra/08_tarifas_dtou.sh`
+- ✅ Vistas OLAP en `lumina_olap` (5 vistas) → `infra/09_vistas_olap.sh`
+- ✅ Tarifa dinámica vs. plana: −2.74 % de factura, 86 % de hogares ToU ahorran; −5.6 % de consumo en eventos Altos contra control → `infra/11_tarifas.sh`
+- ✅ Pronóstico D+1 por zona (MAPE 4.4 % vs. 6.9 % ingenuo) y por hogar (WAPE 18.5 % vs. 21.3 %), ≤ US$0.42 → `infra/10_pronostico.sh`
+- ⬜ Mantenimiento predictivo: ranking de medidores defectuosos y zonas con sobrecarga (base: `v_calidad_medidores`, `v_alertas`)
+- ⬜ Tablero en Looker Studio sobre `lumina_olap`
 
 ### Entrega 3 · Exposición y demo
-- ⬜ API REST en Cloud Run (consumo por hogar, alertas, pronóstico)
+- 🟡 API REST (7 rutas: carga, pronóstico, consumo, factura, alertas, segmentos) → `src/api/`; falta desplegar en Cloud Run (requiere OK: endpoint público)
 - ⬜ Guion de demo end-to-end
 - ⬜ Slides con los 10 puntos del PDF (KPIs, calculadora, arquitectura, demo, conclusiones)
 - ✅ Libro del proyecto (Quarto Book): 19 capítulos en 3 partes + apéndices, Parte I generada desde la sustentación, flujo interactivo incluido → `_quarto.yml`, `book/`

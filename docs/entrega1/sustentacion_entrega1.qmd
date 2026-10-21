@@ -29,8 +29,11 @@ Lumina Energía necesita convertir las lecturas de 8 millones de medidores intel
 | Escenario de lectura cada 1 min | ≈ US$157 k/año, el costo por lectura baja 5.6× | Calculadora (§ 6) |
 | Carga en hora punta (17–21 h) sobre el promedio diario | +39 % | Datos del caso, BigQuery |
 | Consumo por hogar en los días más fríos | +33 % | Datos del caso, BigQuery |
+| Ahorro de la tarifa dinámica frente a la plana (2013) | −2.74 %; ahorra el 86 % de los hogares ToU | Calendario oficial dToU + consumo real |
+| Recorte del consumo en eventos de precio Alto, contra grupo de control | −5.6 % | Calendario oficial dToU + consumo real |
+| Error del pronóstico D+1 de carga por zona (ene–feb 2014, fuera de muestra) | 4.4 % MAPE, frente a 6.9 % de repetir el día anterior | BigQuery ML |
 | Prototipo implementado: lecturas procesadas y validadas | 167.8 M, coincidencia exacta con la fuente | Fase 2 |
-| Costo del prototipo hasta hoy | ≈ US$1 de US$300 | Bitácora de costos |
+| Costo del prototipo hasta hoy | ≈ US$1.7 de US$300 | Bitácora de costos |
 
 # Arquitectura end-to-end
 
@@ -193,8 +196,10 @@ Supuestos: 8 M medidores, retención de 7 días en Kafka, 10 TiB/mes de consulta
 
 ## Valor para el negocio
 
-- **Reducción del pico (ilustrativo).** Con un consumo medio de 0.43 kW por hogar y la punta 39 % sobre el promedio, la punta agregada es ≈ 4.8 GW. Recortar 5 % evita ≈ 240 MW de compras de emergencia. Con una prima supuesta de US$100/MWh durante 4 h en 90 días de invierno, son ≈ US$8.6 M al año, unas 290 veces el costo de la plataforma.
-- **Tarifa dinámica frente a fija.** El ensayo Low Carbon London (2013) usó tres precios dToU (alto, normal y bajo) contra una tarifa plana. La Fase 4 calculará la factura de cada hogar ToU con el calendario de eventos de 2013 y la comparará con lo que habría pagado en tarifa fija. Dato preliminar, sin control por segmento: los hogares ToU consumen 9.50 kWh/día frente a 10.28 de los de tarifa estándar (−7.6 %).
+- **Tarifa dinámica frente a fija (medido).** Con el calendario oficial dToU de 2013 (17,520 medias horas, precios Alto 67.20, Normal 11.76 y Bajo 3.99 p/kWh frente a 14.228 de la tarifa plana) y el consumo real de cada hogar: los 1,038 hogares ToU pagaron en promedio **£475.85 frente a £489.27 con tarifa plana, un 2.74 % menos**, y el **86 %** de ellos ahorró. La tarifa dinámica es más económica que la fija, como exige el caso.
+- **Respuesta a la demanda (medido).** Frente a su propio consumo normal a la misma hora, los hogares ToU consumieron **4.6 % menos durante los eventos de precio Alto** y 6.8 % más en los de precio Bajo; los 4,069 hogares de tarifa estándar, que no recibieron señales, se mantuvieron estables (+1.0 % y +0.5 %). Contra ese grupo de control, la tarifa dinámica **recorta 5.6 % el consumo en la punta** y desplaza 6.3 % hacia las horas baratas.
+- **Valor de la reducción del pico.** Con un consumo medio de 0.43 kW por hogar y la punta 39 % sobre el promedio, la punta agregada es ≈ 4.8 GW. El recorte medido de 5.6 % evita ≈ 270 MW de compras de emergencia. Con una prima supuesta de US$100/MWh durante 4 h en 90 días de invierno, son ≈ US$9.6 M al año, unas 330 veces el costo de la plataforma.
+- **Pronóstico D+1 (medido).** Un modelo de *boosted trees* en BigQuery ML, entrenado con 2012–2013 y evaluado en enero y febrero de 2014, pronostica la carga de cada zona cada 30 min con **4.4 % de error medio (MAPE)**, frente a 6.9 % de suponer que mañana será igual que hoy: un 36 % menos de error en el plan de compras del día siguiente. Por hogar y día, el error ponderado por energía (WAPE) baja de 21.3 % a 18.5 %.
 - **Costo operativo por kWh.** Se reportará en Looker Studio como (costo de plataforma + compras de emergencia evitadas) / kWh distribuido, por zona y mes.
 
 # Plan de recuperación y alta disponibilidad (DRP/HA)

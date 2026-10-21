@@ -37,8 +37,8 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 |---|---|---|---|---|
 | 1 | Lectura en vivo → historia | `streaming_job.py` guarda cada lectura en `raw/streaming/` (bronze) además de evaluarla; el batch de la noche la consolida en `curated` | Consulta `bronze` en `streaming_job.py` (file sink Parquet por fecha, exactly-once); `silver.py --entrada-streaming` lo consolida | 🟡 Implementado; falta probarlo en vivo |
 | 2 | Lo aprendido → streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming | `streaming_job.py`: `Contexto.refrescar()` en cada micro-lote, cada `--refresco-horas` (24) | 🟡 Implementado; falta probarlo en vivo |
-| 3 | Historia + hoy → consumo | Vistas que unen `lumina_curated` (hasta ayer) con `lumina_rt` (hoy) | `lumina_olap` (Fase 4) | ⬜ |
-| 4 | Dato provisional → definitivo | Las vistas toman de `lumina_rt` solo lo posterior a lo último que procesó el batch; **si hay diferencia, manda el batch** (incorpora lecturas atrasadas y correcciones) | Regla en las vistas `lumina_olap` | ⬜ |
+| 3 | Historia + hoy → consumo | Vistas que unen `lumina_curated` (hasta ayer) con `lumina_rt` (hoy) | `src/sql/olap_vistas.sql`: `v_carga_zona_30min` y demás vistas de `lumina_olap` | ✅ Vistas creadas |
+| 4 | Dato provisional → definitivo | Las vistas toman de `lumina_rt` solo lo posterior a lo último que procesó el batch; **si hay diferencia, manda el batch** (incorpora lecturas atrasadas y correcciones) | `v_carga_zona_30min`: de `rt` solo `ts_utc` > último `ts_utc` del batch, última versión por `ts_procesado` | ✅ Regla en la vista (0 filas de `rt` con el replay de 2013, como corresponde) |
 
 ## Camino batch
 
@@ -70,5 +70,11 @@ Hay dos enfoques clásicos para combinar batch y streaming:
 | `src/streaming/replay_producer.py` | VM `lumina-ops`, contenedor `replay` | Por demo | Reproduce lecturas de 2013 como eventos; inyecta fallas | `lumina_curated` | Kafka `meter.readings`, `grid.demand` |
 | `src/streaming/streaming_job.py` | VM `lumina-ops`, contenedor `spark-streaming` (perfil `streaming`) | Continuo mientras la VM está encendida | Anomalías, picos por zona, medidores silenciosos, demanda; copia cruda a bronze; recarga reglas cada 24 h | Kafka, `lumina_curated` | `lumina_rt`, `raw/streaming/`, Kafka `alerts.*`, checkpoints en GCS |
 | `src/sql/streaming_tablas.sql` | BigQuery | Una vez | Crea las tablas de salida del streaming | — | `lumina_rt` |
+| `infra/08_tarifas_dtou.sh` | Laptop | Una vez | Descarga el calendario oficial dToU 2013 y lo carga | UK Power Networks (`Tariffs.xlsx`) | `raw/tarifas/`, `lumina_curated.dim_tarifa_dtou` |
+| `src/ingestion/tarifas_dtou.py` | Laptop | Una vez | Convierte el Excel a CSV por media hora en UTC, con el precio de cada nivel | `Tariffs.xlsx` | CSV |
+| `infra/09_vistas_olap.sh` + `src/sql/olap_vistas.sql` | BigQuery | Una vez (las vistas se recalculan al consultarlas) | Capa de servicio Lambda: une `curated` y `rt` (sincronización 3 y 4) | `lumina_curated`, `lumina_rt` | `lumina_olap` (5 vistas) |
+| `infra/11_tarifas.sh` + `src/sql/tarifas.sql` | BigQuery | Al cambiar tarifas | Factura 2013 con tarifa dinámica y plana; respuesta a eventos de precio | `fact_consumo_30min`, `dim_tarifa_dtou`, `dim_hogar` | `lumina_ml.factura_tarifas_2013`, `respuesta_eventos_2013` |
+| `infra/10_pronostico.sh` + `src/sql/pronostico.sql` | BigQuery ML | Al reentrenar (en producción, semanal) | Variables, dos modelos boosted tree D+1 (zona y hogar), pronósticos y métricas; imprime el costo real | `lumina_curated` | `lumina_ml` (`modelo_*_d1`, `pronostico_*_d1`, `metricas_pronostico`) |
+| `src/api/main.py` (+ `Dockerfile`) | Cloud Run (pendiente de desplegar) | Por petición, escala a cero | API REST de solo lectura con tope de bytes por consulta | `lumina_olap`, `lumina_ml`, `lumina_curated` | — |
 | `src/costos/calculadora_consumo.py` | Laptop | Al cambiar supuestos | Costo del primer año en producción | Supuestos del script | `docs/entrega1/calculadora_consumo.md` |
 | `infra/shutdown.sh` / `infra/teardown.sh` | Laptop | Fin de sesión / fin de curso | Apaga lo que cobra por hora / borra todo | — | — |

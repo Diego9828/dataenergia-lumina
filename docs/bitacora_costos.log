@@ -5,3 +5,4 @@ lumina-silver-20261020-164754  estado=SUCCEEDED  duracion=10.6 min  DCU-h=3.544 
 lumina-gold-20261020-165907  estado=SUCCEEDED  duracion=21.8 min  DCU-h=7.250 (cota sup.)  costo<=US$0.435
 lumina-ops (VM e2-standard-4, streaming)  estado=DESTRUIDA  duracion=31 min  costo<=US$0.070
 lumina-ops (VM e2-standard-4, prueba Airflow)  estado=DESTRUIDA  duracion=11 min  costo<=US$0.025
+BigQuery 2026-10-21 (vistas OLAP + tarifas dToU + pronóstico D+1 con BigQuery ML)  estado=OK  68.2 GiB facturados  costo<=US$0.42 (a US$6.25/TiB, antes del TB gratis mensual)
