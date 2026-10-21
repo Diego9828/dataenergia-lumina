@@ -27,6 +27,7 @@ CAPITULOS: list[tuple[str, str | None, list[str]]] = [
     ("_e1_resiliencia.qmd", "Resiliencia, seguridad y alcance",
      ["Plan de recuperación y alta disponibilidad (DRP/HA)", "Seguridad y gobernanza",
       "Supuestos y fuera de alcance"]),
+    ("_e1_glosario.qmd", "Glosario", ["Glosario"]),
     ("_e1_referencias.qmd", "Referencias", ["Referencias"]),
 ]
 AVISO = "<!-- Generado por book/extraer_entrega1.py desde sustentacion_entrega1.qmd: no editar aquí. -->\n\n"

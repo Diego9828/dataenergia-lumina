@@ -2,9 +2,9 @@ flowchart LR
   subgraph SRC["Fuentes"]
     F1["Medidores inteligentes<br/>8 M, cada 30 min"]
     F2["Operador de red<br/>demanda nacional y renovables"]
-    F3["Eventos de tarifa<br/>dinámica (DR)"]
+    F3["Eventos de tarifa<br/>dinámica"]
     F4["Clima<br/>pronóstico y observado"]
-    F5["Maestros<br/>hogares, Acorn, feriados"]
+    F5["Datos maestros<br/>hogares, Acorn, feriados"]
   end
 
   subgraph ING["Capa de Ingesta"]
@@ -13,9 +13,9 @@ flowchart LR
   end
 
   subgraph COMP["Capa de Cómputo"]
-    C1["Spark Structured Streaming<br/>picos, anomalías, huecos, DR"]
+    C1["Spark Structured Streaming<br/>picos, anomalías, huecos,<br/>respuesta a la demanda"]
     C2["Spark batch serverless<br/>limpieza, modelo, perfiles"]
-    C3["BigQuery SQL / BQML<br/>pronóstico D+1, PdM"]
+    C3["BigQuery SQL / BigQuery ML<br/>pronóstico D+1,<br/>mantenimiento predictivo"]
   end
 
   subgraph ALM["Capa de Almacenamiento"]
@@ -27,9 +27,10 @@ flowchart LR
 
   subgraph EXP["Capa de Exposición"]
     E0["Vistas lumina_olap<br/>4 · hasta ayer del batch,<br/>hoy del rt; manda el batch"]
-    E1["API REST / WebSocket<br/>Cloud Run"]
+    E1["API REST<br/>Cloud Run"]
     E2["Looker Studio<br/>informes OLAP"]
-    E3["Alertas DR<br/>tópico alerts.dr"]
+    E3["Señales de respuesta<br/>a la demanda<br/>tópico alerts.dr"]
+    E4["Firebase<br/>Authentication (login)<br/>Cloud Messaging (push)"]
   end
 
   subgraph TRV["Transversal"]
@@ -61,7 +62,9 @@ flowchart LR
   E0 --> E1
   A3 --> E1
   E1 --> APP
-  E3 --> APP
+  E3 --> E4
+  E4 -->|avisos push| APP
+  E4 -.->|login| E1
   T1 -.-> C2
   T1 -.-> C3
 
@@ -76,7 +79,7 @@ flowchart LR
   class I1,I2 ing
   class C1,C2,C3 comp
   class A1,A2,A3,A4 alm
-  class E0,E1,E2,E3 exp
+  class E0,E1,E2,E3,E4 exp
   class T1,T2,T3 trv
   class APP app
   style SRC fill:#FAFCFF,stroke:#B8C7DC

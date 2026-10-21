@@ -16,91 +16,171 @@ format:
     embed-resources: true
 ---
 
-> Documento elaborado con asistencia de IA generativa (Claude). Las cifras de costo usan precios de lista de Google Cloud (us-central1, octubre de 2026) y deben validarse con la Google Cloud Pricing Calculator; las decisiones técnicas, con el docente.
+> Documento elaborado con asistencia de IA generativa (Claude). Las cifras de costo usan precios de lista de Google Cloud (región us-central1, octubre de 2026) y deben validarse con la Google Cloud Pricing Calculator; las decisiones técnicas, con el docente.
+>
+> Cada término técnico y cada sigla se explican la primera vez que aparecen. El Glosario (§ 12) los reúne todos.
 
 # Resumen ejecutivo
 
-Lumina Energía necesita convertir las lecturas de 8 millones de medidores inteligentes, hoy usadas solo para facturar, en decisiones de red en tiempo real, planes diarios de demanda, informes operativos y mantenimiento predictivo. Proponemos un **lakehouse en Google Cloud con APIs de código abierto** (Kafka, Spark, Airflow, Parquet) sobre servicios gestionados, con BigQuery como data warehouse y Bigtable para servir la app.
+Lumina Energía necesita convertir las lecturas de 8 millones de medidores inteligentes, que hoy solo se usan para facturar, en cuatro capacidades:
+
+- decisiones de red en tiempo real;
+- planes diarios de demanda;
+- informes operativos;
+- **mantenimiento predictivo**, es decir, anticipar fallas de medidores y equipos antes de que ocurran.
+
+Proponemos un **lakehouse** en Google Cloud, que combina dos tipos de almacén:
+
+- un *data lake*, un almacén de archivos barato que guarda todos los datos, crudos y limpios;
+- un *data warehouse*, una base de datos analítica para consultas rápidas en SQL. Aquí es BigQuery.
+
+Las piezas usan **APIs de código abierto**: Kafka, Spark, Airflow y el formato Parquet, descritos más abajo en la arquitectura. Una API (interfaz de programación) es la forma en que un programa se comunica con otro; si es abierta, el mismo código funciona con otro proveedor. Las piezas corren como **servicios gestionados**: Google opera los servidores y Lumina solo los usa.
 
 | Indicador | Valor | Fuente |
 |---|---|---|
-| Lecturas por día (8 M medidores, cada 30 min) | 384 M | Dimensionamiento |
-| Costo de plataforma, primer año, producción | ≈ US$29 k (US$0.0003 por medidor al mes) | Calculadora (§ 6) |
-| Escenario de lectura cada 1 min | ≈ US$157 k/año, el costo por lectura baja 5.6× | Calculadora (§ 6) |
-| Carga en hora punta (17–21 h) sobre el promedio diario | +39 % | Datos del caso, BigQuery |
+| Lecturas por día (8 M medidores, una cada 30 min) | 384 M | Dimensionamiento |
+| Costo de la plataforma en producción, primer año | ≈ US$29 k (US$0.0003 por medidor al mes) | Calculadora (§ 7) |
+| Escenario con una lectura por minuto | ≈ US$157 k/año; el costo por lectura baja 5.6× | Calculadora (§ 7) |
+| Carga en **hora punta** (17–21 h, cuando más energía se consume) sobre el promedio diario | +39 % | Datos del caso, BigQuery |
 | Consumo por hogar en los días más fríos | +33 % | Datos del caso, BigQuery |
-| Ahorro de la tarifa dinámica frente a la plana (2013) | −2.74 %; ahorra el 86 % de los hogares ToU | Calendario oficial dToU + consumo real |
-| Recorte del consumo en eventos de precio Alto, contra grupo de control | −5.6 % | Calendario oficial dToU + consumo real |
-| Error del pronóstico D+1 de carga por zona (ene–feb 2014, fuera de muestra) | 4.4 % MAPE, frente a 6.9 % de repetir el día anterior | BigQuery ML |
-| Prototipo implementado: lecturas procesadas y validadas | 167.8 M, coincidencia exacta con la fuente | Fase 2 |
-| Costo del prototipo hasta hoy | ≈ US$1.7 de US$300 | Bitácora de costos |
+| Ahorro de la **tarifa dinámica** frente a la **tarifa plana** en 2013 (ver definiciones abajo) | −2.74 %; ahorra el 86 % de los hogares con tarifa dinámica | Calendario oficial de precios 2013 + consumo real |
+| Recorte del consumo durante los eventos de precio Alto, frente al **grupo de control** | −5.6 % | Calendario oficial de precios 2013 + consumo real |
+| Error del **pronóstico D+1** (del día siguiente) de la carga por zona, en meses que el modelo no vio al entrenar (enero–febrero de 2014) | 4.4 % de error porcentual medio, frente a 6.9 % de suponer que mañana será igual que hoy | BigQuery ML |
+| Prototipo implementado: lecturas procesadas y validadas | 167.8 M; coinciden exactamente con la fuente | Prototipo, Fase 2 |
+| Costo del prototipo hasta hoy | ≈ US$1.7 de un tope de US$300 | Bitácora de costos |
+
+**Tarifas.** Con la **tarifa plana** (en los datos, `Std`, estándar), el kWh cuesta lo mismo a toda hora. Con la **tarifa dinámica**, el precio de cada media hora es Alto, Normal o Bajo y se anuncia un día antes. En los datos se llama **ToU** (*Time of Use*, tarifa por franja horaria), y su variante dinámica de 2013, **dToU**. En 2013, unos 1,100 hogares de Londres probaron la tarifa dinámica y el resto siguió con la plana. Esos hogares con tarifa plana son el **grupo de control**: muestran cómo se consume sin señales de precio.
 
 # Arquitectura end-to-end
+
+Dos formas de procesar datos atraviesan todo el documento:
+
+- **Batch** (por lotes): se procesa un bloque grande de datos de una vez, por ejemplo todas las lecturas del día, cada noche. Es barato y exacto, pero el resultado llega horas después.
+- **Streaming** (en flujo): cada dato se procesa apenas llega, en segundos. Permite reaccionar en el momento, pero cada dato se evalúa con poco contexto.
+
+La arquitectura se organiza en cuatro capas: **ingesta** (recibir los datos), **cómputo** (procesarlos), **almacenamiento** (guardarlos) y **exposición** (entregarlos a personas y sistemas).
 
 ![Arquitectura de producción en cuatro capas](diagrama_capas.png){width=100%}
 
 | Capa | Componentes | Función |
 |---|---|---|
-| **Ingesta** | Managed Service for Apache Kafka; Kafka Connect y Storage Transfer para cargas batch | Recibir lecturas, demanda de red y eventos de tarifa como flujo; traer clima y maestros por lotes |
-| **Cómputo** | Spark Structured Streaming (24/7); Spark batch serverless (Managed Service for Apache Spark, ex Dataproc Serverless); BigQuery SQL/BQML | Detectar picos, anomalías y huecos en segundos; limpiar y modelar el histórico; pronosticar la demanda D+1 |
-| **Almacenamiento** | Lakehouse en GCS (raw, silver, gold en Parquet); BigQuery `curated` (capa batch) y `rt` (capa de velocidad); Bigtable | Fuente de verdad barata y abierta; warehouse analítico histórico y de lo reciente; serie de tiempo por medidor para la app |
-| **Exposición** | Vistas `lumina_olap` (unen historia y hoy); API REST/WebSocket en Cloud Run; Looker Studio; tópico `alerts.dr` | Una sola vista de los datos para la app, los informes OLAP y las señales de respuesta a la demanda |
-| Transversal | Airflow (Composer 3), IAM, Secret Manager, policy tags, Cloud Monitoring y Logging | Orquestación, seguridad, gobierno y observabilidad |
+| **Ingesta** | Managed Service for Apache Kafka; Kafka Connect y Storage Transfer para cargas batch | Recibir como flujo las lecturas, la demanda de la red y los eventos de tarifa; traer por lotes el clima y los datos maestros |
+| **Cómputo** | Spark Structured Streaming (24/7); Spark batch *serverless*; BigQuery SQL y BigQuery ML | Detectar picos, anomalías y medidores sin datos en segundos; limpiar y modelar el histórico; pronosticar la demanda D+1 |
+| **Almacenamiento** | Lakehouse en GCS (capas raw, silver y gold en Parquet); BigQuery `curated` (capa batch) y `rt` (capa de velocidad); Bigtable | Fuente de verdad barata y abierta; warehouse analítico de la historia y de lo reciente; serie de tiempo por medidor para la app |
+| **Exposición** | Vistas `lumina_olap`; API REST en Cloud Run; Firebase (Authentication y Cloud Messaging); Looker Studio; tópico `alerts.dr` | Una sola vista de los datos para la app y los informes; inicio de sesión de clientes; avisos al celular; señales de respuesta a la demanda |
+| Transversal | Airflow (Composer 3), IAM, Secret Manager, *policy tags*, Cloud Monitoring y Logging | Orquestación, seguridad, gobierno y observabilidad |
+
+**Qué es cada componente**
+
+| Componente | Qué es |
+|---|---|
+| **Apache Kafka** | Sistema de mensajería: recibe eventos (aquí, lecturas) y los guarda en orden durante días para que otros programas los lean. Organiza los mensajes en **tópicos**, canales con nombre como `meter.readings`. *Managed Service for Apache Kafka* es la versión que opera Google |
+| **Kafka Connect** | Conectores que copian datos entre Kafka y otros sistemas, como un bucket de archivos |
+| **Storage Transfer** | Servicio de Google que copia archivos por lotes desde otras fuentes a la nube |
+| **Apache Spark** | Motor que procesa grandes volúmenes en paralelo en varias máquinas. *Structured Streaming* es su modo en flujo; *Managed Service for Apache Spark* (antes Dataproc Serverless) lo corre en modo ***serverless***: se paga solo mientras el trabajo corre, sin servidores encendidos |
+| **BigQuery** | Data warehouse de Google: se consulta con SQL y cobra por los datos que lee cada consulta. **BigQuery ML** entrena modelos de *machine learning* (aprendizaje automático) con SQL |
+| **GCS** | *Google Cloud Storage*, el almacén de archivos de Google; es el data lake. Los archivos viven en contenedores llamados *buckets* |
+| **raw, silver, gold** | Capas del lake: **raw** (también llamada *bronze*) guarda el dato tal como llegó; **silver**, el dato limpio y tipado; **gold**, las tablas listas para el análisis |
+| **Parquet** | Formato de archivo abierto que guarda los datos por columnas y comprimidos: ocupa menos y se lee más rápido que un CSV |
+| **`curated` y `rt`** | Datasets (grupos de tablas) de BigQuery. `curated` tiene la historia limpia, hasta ayer; `rt` (*real time*, tiempo real) tiene lo que produjo el streaming hoy |
+| **Bigtable** | Base de datos de Google que responde en milisegundos a millones de consultas pequeñas; ideal para la serie de tiempo de cada medidor (sus lecturas ordenadas por hora) |
+| **Vistas `lumina_olap`** | Consultas guardadas que se ven como tablas. **OLAP** (*Online Analytical Processing*) es el análisis que agrega muchos datos, como el consumo por zona y mes |
+| **API REST** | Interfaz web: la app pide datos a una dirección (por ejemplo, `/hogares/123/consumo`) y recibe la respuesta en JSON, un formato de texto estructurado |
+| **Cloud Run** | Servicio de Google que corre la API en contenedores: crea instancias cuando llegan peticiones y las apaga cuando no hay |
+| **Firebase** | Plataforma de Google para apps. Se usan dos piezas: **Authentication**, el inicio de sesión de cada cliente, para que solo vea su hogar; y **Cloud Messaging**, el envío de avisos *push* (notificaciones al celular) |
+| **Looker Studio** | Herramienta gratuita de Google para tableros e informes |
+| **Respuesta a la demanda** | En inglés, *demand response* (DR): pedir a los clientes que bajen o muevan su consumo ante una señal de precio. El tópico `alerts.dr` lleva esas señales |
+| **Apache Airflow** | Orquestador: programa y encadena tareas batch (primero limpiar, luego modelar, luego cargar). Cada flujo es un **DAG** (*Directed Acyclic Graph*: tareas con un orden y sin ciclos). **Composer 3** es Airflow operado por Google |
+| **IAM, Secret Manager, *policy tags*** | **IAM** (*Identity and Access Management*): quién puede hacer qué. **Secret Manager**: guarda contraseñas y claves. ***Policy tags***: etiquetas de BigQuery que restringen quién ve una columna |
+| **Cloud Monitoring y Logging** | Métricas, alarmas y registros de todo lo que corre |
 
 ## Patrón Lambda: cómo se combinan batch y streaming
 
-La arquitectura sigue el patrón **Lambda**: una **capa batch** que guarda la verdad histórica y aprende qué es normal para cada hogar, una **capa de velocidad** que evalúa cada lectura nueva en segundos, y una **capa de servicio** que las une. Se descartó **Kappa** (solo streaming, reprocesando la historia desde el log de Kafka), porque los perfiles por hogar, el pronóstico D+1 y los informes requieren recalcular dos años de historia, y eso es más barato y simple en batch. Para no duplicar lógica, ambas capas usan el mismo motor (Spark) y una sola puerta de entrada (Kafka).
+Hay dos formas conocidas de combinar batch y streaming. Esta arquitectura sigue el patrón **Lambda**, que tiene tres capas:
+
+- una **capa batch** que guarda la verdad histórica y aprende qué es normal para cada hogar;
+- una **capa de velocidad** (el streaming) que evalúa cada lectura nueva en segundos;
+- una **capa de servicio** que une las dos.
+
+Se descartó el patrón **Kappa**, que usa solo streaming y, para recalcular la historia, vuelve a leer todos los eventos guardados en Kafka. Los perfiles por hogar, el pronóstico D+1 y los informes necesitan recalcular dos años de historia, y eso es más barato y simple en batch. Para no duplicar lógica, ambas capas usan el mismo motor (Spark) y una sola puerta de entrada (Kafka).
 
 ![Arquitectura Lambda y puntos de sincronización](../diagrama_lambda.png){width=100%}
 
-**Sentido de los flujos:** los **datos** van del streaming al batch (cada lectura en vivo se copia a bronze y el batch la vuelve definitiva); del batch al streaming solo viajan **reglas** (perfiles y umbrales). El batch no escribe en `lumina_rt`: la precedencia del batch es una regla de las vistas.
+**Sentido de los flujos:**
+
+- **Los datos van del streaming al batch.** Cada lectura en vivo se copia a la capa raw del lake, y el batch de la noche la vuelve definitiva.
+- **Del batch al streaming solo viajan reglas:**
+  - **perfiles**: el consumo típico de cada hogar según la hora y el tipo de día;
+  - **umbrales**: el valor a partir del cual una lectura se considera anómala.
+- **El batch no escribe en `rt`.** Que mande el batch es una regla de las vistas.
 
 | # | Sincronización | Mecanismo |
 |---|---|---|
-| 1 | La lectura en vivo pasa a la historia | El job de streaming guarda cada lectura en bronze (además de evaluarla); el batch nocturno la consolida en `curated` |
-| 2 | Lo aprendido llega al streaming | `perfil_hogar` y `umbral_zona` (batch) son los umbrales del streaming; se recargan cada día |
+| 1 | La lectura en vivo pasa a la historia | El programa de streaming guarda cada lectura en raw, además de evaluarla; el batch nocturno la consolida en `curated` |
+| 2 | Lo aprendido llega al streaming | Las tablas `perfil_hogar` y `umbral_zona`, que calcula el batch, son los umbrales del streaming y se recargan cada día. Ejemplo: si un hogar consume en promedio 0.3 kWh a las 19 h, una lectura de 2.6 kWh es una alerta; para una familia que consume 0.8 kWh a esa hora, no |
 | 3 | Una sola vista para el consumo | Las vistas `lumina_olap` unen `curated` (hasta ayer) con `rt` (hoy) |
-| 4 | El dato provisional se vuelve definitivo | De `rt` solo se toma lo posterior al último batch; si hay diferencia, manda el batch, que incorpora lecturas atrasadas |
+| 4 | El dato provisional se vuelve definitivo | De `rt` solo se toma lo posterior al último batch. Si hay diferencias, manda el batch, que incorpora las lecturas atrasadas |
 
 ## Producción frente al prototipo del taller
 
-El prototipo usa los mismos motores y formatos con menos capacidad, para mantenerse dentro de US$300:
+El prototipo usa los mismos motores y formatos, con menos capacidad, para mantenerse dentro de US$300. Los servicios de producción cobran por hora aunque nadie los use y no se pueden pausar: uno olvidado encendido consumiría el presupuesto en semanas. En cambio, una VM (máquina virtual) con Kafka, Spark y Airflow cuesta ≈ US$0.13 por hora y se destruye al terminar cada demostración. El código no cambia al pasar a producción: el Kafka gestionado habla el mismo protocolo y Composer ejecuta los mismos DAGs.
 
-| Pieza | Producción | Prototipo (implementado o planificado) |
-|---|---|---|
-| Bus de eventos | Managed Service for Apache Kafka, 3 zonas | Kafka (KRaft) en una VM que se enciende por sesión |
-| Streaming | Clúster Spark 24/7 | Spark Structured Streaming en la misma VM |
-| Batch | Spark serverless diario | Spark serverless, **implementado** (silver y gold) |
-| Orquestación | Composer 3 | Airflow en la VM (mismos DAGs) |
-| Serving de la app | Bigtable + Cloud Run | BigQuery + Cloud Run |
-| Lake | GCS dual-region | GCS regional, **implementado** |
+| Pieza | Producción | Costo mínimo en producción | Prototipo (implementado o planificado) |
+|---|---|---|---|
+| Bus de eventos | Managed Service for Apache Kafka en 3 zonas (centros de datos independientes de una región) | ≈ US$250/mes encendido | Kafka en una VM que se enciende por sesión, en modo **KRaft** (sin ZooKeeper, el servicio de coordinación que Kafka requería antes) |
+| Streaming | Clúster Spark 24/7 | Según tamaño | Spark Structured Streaming en la misma VM, **implementado** |
+| Batch | Spark serverless diario | Solo mientras corre | Spark serverless, **implementado** (capas silver y gold) |
+| Orquestación | Composer 3 | ≈ US$250/mes; tarda ~25 min en crearse | Airflow en la VM, con los mismos DAGs, **implementado** |
+| Serving de la app | Bigtable + Cloud Run + Firebase | ≈ US$475/mes por nodo de Bigtable | BigQuery + Cloud Run (con 5,561 hogares, BigQuery responde en 1–2 s) |
+| Lake | GCS *dual-region* (cada archivo se guarda en dos regiones) | Por GB guardado | GCS en una región, **implementado** |
 
 # Integración multifuente
 
 ## Fuentes y mecanismo de captura
 
+La **llave de cruce** es la columna con la que se unen las fuentes: `lclid` es el identificador del medidor y `ts_utc`, la fecha y hora de la lectura.
+
 | Fuente | Tipo | Velocidad | Captura | Llave de cruce |
 |---|---|---|---|---|
-| Lecturas de medidores (`halfhourly_dataset`) | IoT | 30 min (→ 1 min) | Streaming (Kafka) | `lclid`, `ts_utc` |
-| Hogares y segmento Acorn | Maestro | Casi estática | Batch | `lclid` → `acorn` |
+| Lecturas de medidores (`halfhourly_dataset`) | IoT (*Internet of Things*: dispositivos que envían datos solos) | 30 min (→ 1 min) | Streaming (Kafka) | `lclid`, `ts_utc` |
+| Hogares y segmento Acorn | Dato maestro | Casi estática | Batch | `lclid` → `acorn` |
 | Perfil demográfico Acorn | Referencia | Estática | Batch | `acorn` |
-| Clima DarkSky (horario, diario) | Externa | Horaria | Batch (prod.: API de pronóstico) | `ts_utc` / `fecha` |
-| Clima NOAA GSOD (Heathrow) | Warehouse público | Diaria | Consulta directa en BigQuery | `fecha` |
+| Clima DarkSky (horario y diario) | Externa | Horaria | Batch (en producción, una API de pronóstico del clima) | `ts_utc` / `fecha` |
+| Clima NOAA GSOD (aeropuerto de Heathrow) | Warehouse público | Diaria | Consulta directa en BigQuery | `fecha` |
 | Feriados del Reino Unido | Calendario | Anual | Batch | `fecha` |
 | Demanda nacional y renovables (National Grid ESO) | Externa, red | 30 min | Streaming / batch | `ts_utc` |
 | Eventos de tarifa dinámica (dToU 2013) | Externa, precio | Eventos | Streaming | `ts_utc` |
 
+Las fuentes de la tabla:
+
+- **Datos maestros:** catálogos que describen a las entidades y cambian poco. Aquí son el hogar, con su tarifa, segmento, zona y transformador. En producción vendrían del sistema comercial de Lumina.
+- **Acorn:** clasificación socioeconómica de hogares del Reino Unido, elaborada por la empresa CACI; agrupa los hogares por nivel de ingresos y estilo de vida.
+- **DarkSky:** servicio de clima cuyos datos vienen incluidos en el dataset del caso.
+- **NOAA GSOD:** resumen diario del clima (*Global Surface Summary of the Day*) de NOAA, la agencia climática de EE. UU., publicado gratis en BigQuery.
+- **National Grid ESO:** el operador del sistema eléctrico británico.
+
 ## Cómo se cruzan los datos
 
-- **Tiempo común en UTC.** Las lecturas ya vienen en UTC (48 por día incluso en cambio de hora). La demanda nacional viene en *settlement periods* de hora local de Londres (46 o 50 en cambio de hora); se convierte con `ts_utc = medianoche local en UTC + (periodo − 1) × 30 min`. La hora punta y los perfiles se calculan en hora local.
-- **Modelo estrella** con `dim_hogar` (tarifa, Acorn, zona y transformador), `dim_fecha` (feriado, tipo de día, estación) y `dim_acorn`, más hechos de consumo a 30 min y diario, carga por transformador y zona, demanda nacional y clima. Detalle en `docs/02_modelo_datos.md`.
-- **Geografía sintética declarada.** El dataset no trae ubicación, así que se asignan 8 zonas de concesión y 112 transformadores con un hash determinístico del medidor.
-- **Calidad desde el origen.** Lecturas `Null`, fuera de la grilla de 30 min y duplicadas se marcan en silver; `dq_medidor` diagnostica a cada medidor.
+- **Tiempo común en UTC.** UTC es el Tiempo Universal Coordinado, que no cambia con el horario de verano.
+  - Las lecturas ya vienen en UTC, con 48 por día incluso en los días de cambio de hora.
+  - La demanda nacional viene en *settlement periods*: las medias horas del mercado eléctrico británico, numeradas en hora local de Londres. Un día de cambio de hora tiene 46 o 50. Se convierten con `ts_utc = medianoche local en UTC + (periodo − 1) × 30 min`.
+  - La hora punta y los perfiles se calculan en hora local.
+- **Modelo estrella.** Es la forma estándar de organizar un warehouse:
+  - **tablas de hechos** con las mediciones: consumo cada 30 min y diario, carga por transformador y zona, demanda nacional y clima;
+  - **tablas de dimensiones** que las describen: `dim_hogar` (tarifa, Acorn, zona y transformador), `dim_fecha` (feriado, tipo de día, estación) y `dim_acorn`.
+
+  El detalle está en `docs/02_modelo_datos.md`.
+- **Geografía sintética declarada.** El dataset no trae ubicación, así que se asignan 8 zonas de concesión y 112 transformadores a partir de un *hash* del identificador del medidor: una función que siempre da la misma zona para el mismo medidor.
+- **Calidad desde el origen.** En la capa silver se marcan las lecturas vacías (`Null`), las que no caen en una media hora exacta y las duplicadas. La tabla `dq_medidor` (*data quality*, calidad de datos) diagnostica a cada medidor.
 
 ## Evidencia del prototipo
 
-- 167,811,461 lecturas en gold; 3,510,403 medidor-día coinciden **exactamente** con el agregado diario publicado en Kaggle (35.54 GWh en ambos lados).
-- Diagnóstico de 5,561 medidores: 5,068 sin problemas, 240 con huecos frecuentes, 232 con más de 24 h seguidas en cero y 21 con cobertura menor al 90 %.
+- 167,811,461 lecturas en la capa gold. Los 3,510,403 pares medidor-día coinciden **exactamente** con el agregado diario publicado en Kaggle: 35.54 GWh en ambos lados.
+- Diagnóstico de 5,561 medidores:
+  - 5,068 sin problemas;
+  - 240 con huecos frecuentes;
+  - 232 con más de 24 h seguidas en cero;
+  - 21 con menos del 90 % de las lecturas esperadas.
 
 # Definición de ingesta y almacenamiento
 
@@ -108,153 +188,293 @@ El prototipo usa los mismos motores y formatos con menos capacidad, para mantene
 
 | Flujo | Mecanismo | Por qué |
 |---|---|---|
-| Lecturas, demanda de red, eventos de tarifa | Kafka, tópicos `meter.readings`, `grid.demand`, `tariff.events`; clave = medidor o zona | Orden por medidor, reproceso (*replay*) y retención de 7 días; API abierta |
-| Lake raw | Kafka Connect, sink a GCS cada pocos minutos | Copia inmutable para reprocesar sin depender del streaming |
-| Clima, maestros, calendario | Cargas batch programadas por Airflow | Cambian poco; no justifican streaming |
-| Clima público | Consulta federada a `bigquery-public-data.noaa_gsod` | Cero ingesta: el dato ya está en el warehouse |
+| Lecturas, demanda de red, eventos de tarifa | Kafka, tópicos `meter.readings`, `grid.demand` y `tariff.events`; cada mensaje lleva como clave el medidor o la zona | Kafka mantiene el orden de los mensajes con la misma clave, permite el ***replay*** (volver a leer eventos pasados) y los retiene 7 días; su API es abierta |
+| Capa raw del lake | Kafka Connect copia los mensajes a GCS cada pocos minutos | Copia que no se modifica, para reprocesar sin depender del streaming |
+| Clima, datos maestros, calendario | Cargas batch programadas por Airflow | Cambian poco; no justifican streaming. Si un cliente cambia de tarifa hoy, basta con saberlo mañana |
+| Clima público | Consulta federada a `bigquery-public-data.noaa_gsod`: BigQuery lee la tabla pública sin copiarla | Cero ingesta: el dato ya está en el warehouse |
 
 ## Almacenamiento según volumen y velocidad
 
 | Motor | Qué guarda | Por qué este |
 |---|---|---|
-| **Lakehouse GCS (Parquet)** | Todo el histórico en raw, silver y gold | US$0.02/GB-mes; formato abierto. En el prototipo, 7.3 GB de CSV quedan en 0.9 GB de Parquet (5.6 bytes por lectura) |
-| **BigQuery** | Modelo estrella; `fact_consumo_30min` particionada por día y clusterizada por medidor; tabla anidada con `STRUCT`/`ARRAY` | SQL serverless para OLAP y ML; la tabla anidada lee 48× menos bytes en análisis por segmento |
-| **Bigtable** | Últimos 7 días por medidor, clave `medidor#ts` invertido | Lecturas de milisegundos para 9 M usuarios de la app; BigQuery no está hecho para consultas puntuales masivas |
-| **Kafka** | Log de eventos de 7 días | Buffer ante picos y caídas; permite reprocesar |
+| **Lakehouse GCS (Parquet)** | Todo el histórico, en las capas raw, silver y gold | US$0.02 por GB al mes y formato abierto. En el prototipo, 7.3 GB de CSV quedan en 0.9 GB de Parquet (5.6 bytes por lectura) |
+| **BigQuery** | El modelo estrella. `fact_consumo_30min` está **particionada** por día (un bloque por fecha, para leer solo los días pedidos) y **agrupada** (*clustering*) por medidor (ordenada por medidor dentro de cada bloque). Incluye una tabla anidada con `STRUCT`/`ARRAY`: una fila por medidor-día con sus 48 lecturas dentro | SQL sin servidores para OLAP y *machine learning*; la tabla anidada lee 48× menos datos en el análisis por segmento |
+| **Bigtable** | Los últimos 7 días de cada medidor. Cada fila se identifica por medidor y fecha invertida, para que lo más reciente quede primero | Respuestas en milisegundos para millones de clientes. BigQuery no sirve para eso: cada consulta tarda segundos y se cobra por separado |
+| **Kafka** | Los eventos de los últimos 7 días | Amortigua picos y caídas; permite reprocesar |
 
 # Justificación del stack tecnológico
 
-Criterios: (1) APIs de código abierto exigidas por la RFP de Lumina, para evitar dependencia del proveedor; (2) servicios gestionados de GCP vistos en clase cuando quitan operación sin costo excesivo; (3) pago por uso para el batch, que es esporádico.
+El *stack* es el conjunto de tecnologías elegidas. Los criterios fueron tres:
+
+1. APIs de código abierto, como exige la RFP de Lumina (*Request for Proposal*, la solicitud de propuestas), para no depender de un proveedor.
+2. Servicios gestionados de Google Cloud vistos en clase, cuando quitan trabajo de operación sin un costo excesivo.
+3. Pago por uso para el batch, que corre de forma esporádica.
 
 | Decisión | Elegido | Alternativas evaluadas | Razón |
 |---|---|---|---|
-| Bus de eventos | Managed Service for Apache Kafka | Pub/Sub | Pub/Sub es más simple, pero propietario; Kafka da orden por partición, *replay* y la API abierta que pide la RFP, ahora sin operar brokers |
-| Procesamiento | Apache Spark (streaming y batch) | Dataflow (Apache Beam) | Un solo motor y lenguaje para ambos caminos; Spark corre en cualquier nube; Dataflow ata el runner a Google |
-| Batch | Spark serverless | Clúster Dataproc permanente | Se paga solo mientras corre: el histórico completo costó US$0.65 |
-| Warehouse | BigQuery | Bigtable, Spanner, Cloud SQL | Columnar y serverless, con particiones, clustering, `STRUCT` y BQML; 1 TB de consultas gratis al mes |
-| Serving por medidor | Bigtable | Memorystore, Cloud SQL | Escala lineal por nodo y latencia de milisegundos para series de tiempo |
-| Orquestación | Apache Airflow (Composer 3 en producción, VM en el taller) | Cloud Workflows, Cloud Scheduler | Estándar abierto; los mismos DAGs se mueven entre VM y Composer |
-| Formato | Parquet (Iceberg como evolución) | CSV, Avro | Columnar y comprimido; lo leen Spark, BigQuery y pandas |
-| Exposición | Cloud Run + Looker Studio | GKE, App Engine, Looker | Escala a cero y sube con la demanda; Looker Studio es gratuito |
+| Bus de eventos | Managed Service for Apache Kafka | Pub/Sub (mensajería propia de Google) | Pub/Sub es más simple, pero propietario. Kafka mantiene el orden por medidor, permite el *replay* y tiene la API abierta que pide la RFP; en su versión gestionada, Lumina no opera los servidores (*brokers*) |
+| Procesamiento | Apache Spark (streaming y batch) | Dataflow, el servicio de Google que ejecuta programas de Apache Beam | Un solo motor y lenguaje para ambos caminos. Spark corre en cualquier nube; Dataflow solo en Google |
+| Batch | Spark serverless | Clúster permanente de Dataproc (Spark en máquinas siempre encendidas) | Se paga solo mientras corre: procesar todo el histórico costó US$0.65 |
+| Warehouse | BigQuery | Bigtable, Spanner, Cloud SQL (bases de datos para transacciones, no para análisis) | Es columnar y sin servidores. Tiene particiones, *clustering*, `STRUCT` y BigQuery ML, y regala 1 TB de consultas al mes |
+| Serving por medidor | Bigtable | Memorystore (caché en memoria), Cloud SQL, Firestore (la base de datos de Firebase) | Escala agregando nodos y responde en milisegundos. Firestore cobra por cada escritura: 384 M lecturas al día costarían ≈ US$350–700 diarios |
+| Orquestación | Apache Airflow (Composer 3 en producción, VM en el taller) | Cloud Workflows, Cloud Scheduler (orquestadores propios de Google) | Estándar abierto; los mismos DAGs funcionan en la VM y en Composer |
+| Formato | Parquet (Iceberg como evolución: agrega versiones y transacciones sobre Parquet) | CSV, Avro (formato por filas) | Columnar y comprimido; lo leen Spark, BigQuery y pandas |
+| Exposición | Cloud Run + Firebase + Looker Studio | GKE (Kubernetes gestionado), App Engine, Looker (versión de pago) | Cloud Run escala a cero y crece con la demanda. Firebase da el inicio de sesión y los avisos push sin construirlos. Looker Studio es gratuito |
 
 # Escalabilidad y performance
 
 ## Modelo de carga
 
-| Métrica | Base (30 min) | Crecimiento (1 min) |
+| Métrica | Base (lectura cada 30 min) | Crecimiento (cada 1 min) |
 |---|---|---|
 | Medidores | 8.0 M (89 % de 9 M clientes) | 8.0 M |
 | Lecturas por día | 384 M | 11,534 M |
-| Eventos por segundo, promedio | 4.4 k | 133 k |
+| Lecturas por segundo, en promedio | 4.4 k | 133 k |
 | Ráfaga si todos los medidores envían en el mismo minuto | 133 k/s (≈ 13 MB/s) | 1.3 M/s (≈ 134 MB/s) |
 | Volumen anual en el lake (raw + silver + gold) | 3.7 TB | 110 TB |
+| Peticiones a la API, en promedio (supuesto: 30 M al mes) | ≈ 12 por segundo | ≈ 12 por segundo |
+| Pico de la API tras un aviso push (supuestos abajo) | ≈ 2,700 por segundo | ≈ 2,700 por segundo |
 
 ## El "Black Friday" de una red eléctrica
 
-En retail el pico es de transacciones. En una red, el **número de lecturas no sube** (depende de cuántos medidores hay y cada cuánto leen). Lo que sube en una ola de frío es:
+En retail, el *Black Friday* es el día en que las compras se multiplican de golpe. Hay que separar qué crece en una red eléctrica y qué crece de golpe:
 
-1. **La carga eléctrica.** En los datos del caso la hora punta supera al promedio diario en 39 % (el máximo de media hora, en 54 %), y en el 5 % de días más fríos cada hogar consume 33 % más. Esto multiplica las **alertas** y los **eventos de respuesta a la demanda** que el streaming debe emitir.
-2. **Las consultas de la app.** Los clientes revisan su consumo y su costo; se asume hasta 3× el tráfico normal.
-3. **Las ráfagas de reconexión.** Tras un corte, los concentradores reenvían de golpe las horas acumuladas.
+| Qué crece | Cómo crece | ¿De golpe? | Qué lo absorbe |
+|---|---|---|---|
+| Lecturas de medidores | Se instalan más medidores (89 % → 100 %) o se lee cada minuto en vez de cada 30 (×30) | No: es un crecimiento planificado, de meses | Ingesta y cómputo, con capacidad agregada de antemano |
+| Ráfagas de ingesta | Todos los medidores envían al cerrar cada media hora (30× el promedio). Tras un corte de luz, más probable en tormentas y olas de frío, los **concentradores** (equipos que reúnen las lecturas de un barrio) reenvían de golpe las horas acumuladas | Sí, pero son los mismos datos llegando juntos, no más datos | Kafka, que actúa como amortiguador: guarda la ráfaga y Spark la procesa a su ritmo |
+| Usuarios de la app | Muchos clientes abren la app al mismo tiempo | **Sí: es el verdadero pico** | La capa de exposición |
+
+**El pico de la app.** Lo dispara la propia operación. Cuando hay un evento de precio Alto para el día siguiente, Lumina envía un aviso push a sus clientes, y muchos abren la app a la vez para ver su consumo, su costo y el pronóstico. Con supuestos ilustrativos, la API recibe ≈ 2,700 peticiones por segundo frente a ≈ 12 en promedio, unas 230 veces más:
+
+- 2 M de clientes tienen la app;
+- el 20 % la abre en los 10 minutos siguientes al aviso;
+- cada sesión hace 4 peticiones.
+
+La arquitectura resiste ese pico por cuatro razones:
+
+- **Cloud Run** crea instancias nuevas de la API en segundos, según las peticiones simultáneas, y las apaga al pasar el pico.
+- **Bigtable** responde cada consulta de un medidor en milisegundos. Según Google, un nodo atiende del orden de 10 mil lecturas por segundo, así que los 2 nodos de la calculadora alcanzan.
+- **El pronóstico ya está calculado.** Se genera cada noche en batch, así que abrir la app solo lee una fila y no ejecuta el modelo.
+- **Los avisos se envían escalonados.** Firebase Cloud Messaging los manda por zona, en tandas de pocos minutos, para aplanar el pico.
+
+**¿Y las alertas?** En una ola de frío, la carga eléctrica sí sube. En los datos del caso, la hora punta supera al promedio diario en 39 % (el máximo de media hora, en 54 %), y en el 5 % de días más fríos cada hogar consume 33 % más. Eso multiplica las alertas y los eventos de respuesta a la demanda, pero no el trabajo del streaming: Spark evalúa cada lectura igual, haya alerta o no. Las alertas son un volumen de salida pequeño: miles por hora, frente a 16 millones de lecturas por hora.
 
 ## Cómo escala cada capa
 
+Términos de esta tabla:
+
+- **vCPU:** un procesador virtual.
+- **Ejecutores:** los procesos de Spark que trabajan en paralelo.
+- ***Watermark*:** el tiempo que Spark espera a los datos atrasados antes de cerrar un cálculo.
+- **DCU** (*Data Compute Unit*): la unidad de cobro de Spark serverless, equivalente a 1 vCPU con 4 GB de memoria.
+
 | Capa | Mecanismo | Frente al pico |
 |---|---|---|
-| Ingesta | Particiones de Kafka por medidor; más vCPU por cada ~15 MB/s | Kafka absorbe ráfagas y reenvíos; los consumidores se ponen al día sin perder datos |
-| Cómputo streaming | Ejecutores de Spark con asignación dinámica; *watermark* para datos tardíos | Un nodo de 4 vCPU adicional por cada ~20 MB/s de ráfaga |
-| Cómputo batch | Spark serverless escala ejecutores por job | Medido en el prototipo: ~264 k lecturas/s con 20 DCU; un día de producción (384 M) toma ~25 min con 20 DCU o ~5 min con 100 DCU |
-| Almacenamiento | BigQuery particionado y clusterizado; Bigtable agrega nodos en línea | Las consultas leen solo la partición y el medidor pedidos |
-| Exposición | Cloud Run autoescala por concurrencia; Looker Studio sobre tablas agregadas | 3× de tráfico se cubre con más instancias, sin tocar el warehouse |
+| Ingesta | Los tópicos de Kafka se dividen en particiones por medidor; se agrega una vCPU por cada ~15 MB/s | Kafka absorbe ráfagas y reenvíos; los lectores se ponen al día sin perder datos |
+| Cómputo streaming | Spark agrega ejecutores según la carga (asignación dinámica); el *watermark* acepta datos tardíos | Un nodo adicional de 4 vCPU por cada ~20 MB/s de ráfaga |
+| Cómputo batch | Spark serverless asigna ejecutores a cada trabajo | Medido en el prototipo: ~264 k lecturas/s con 20 DCU. Un día de producción (384 M lecturas) toma ~25 min con 20 DCU, o ~5 min con 100 DCU |
+| Almacenamiento | BigQuery particionado y agrupado; Bigtable agrega nodos sin detenerse | Las consultas leen solo la partición y el medidor pedidos |
+| Exposición | Cloud Run escala por peticiones simultáneas; Bigtable sirve las lecturas por medidor; los pronósticos están precalculados; Firebase escalona los avisos | El pico de ≈ 230× el promedio se cubre en segundos, sin tocar el warehouse |
 
-**Escalar a otras regiones metropolitanas:** cada metrópoli es un prefijo de tópicos, un conjunto de particiones y un valor de `region` en las tablas (particiones o datasets separados); el código no cambia.
+**Escalar a otras regiones metropolitanas.** Cada metrópoli es un prefijo en los nombres de los tópicos, un conjunto de particiones y un valor de `region` en las tablas. El código no cambia.
 
 # Justificación económica y optimización de costos
 
 ## Calculadora de consumo del primer año (producción)
 
-Supuestos: 8 M medidores, retención de 7 días en Kafka, 10 TiB/mes de consultas OLAP, 30 M requests/mes a la API. El almacenamiento crece linealmente durante el año. El script `src/costos/calculadora_consumo.py` regenera estas tablas al cambiar un supuesto.
+Supuestos:
+
+- 8 M medidores;
+- 7 días de retención en Kafka;
+- 10 TiB al mes de consultas OLAP (1 TiB ≈ 1.1 TB);
+- 30 M peticiones al mes a la API.
+
+El almacenamiento crece de forma lineal durante el año. El script `src/costos/calculadora_consumo.py` regenera estas tablas al cambiar un supuesto.
 
 {{< include calculadora_consumo.md >}}
 
 ## Lectura de las cifras
 
-- **El costo por lectura baja al crecer.** Pasar a 1 min multiplica las lecturas por 30 pero el costo por 5.4, porque los componentes fijos (Composer, API, consultas) se reparten entre más datos.
-- **El costo de plataforma es despreciable frente a la energía.** US$0.001 por MWh distribuido equivale a alrededor de 0.001 % de un precio mayorista típico de US$80/MWh.
-- **El mayor rubro es Bigtable**, por servir 9 M de usuarios con latencia de milisegundos; si la app tolera segundos, puede sustituirse por BigQuery con BI Engine y el total baja ~40 %.
+- **El costo por lectura baja al crecer.** Pasar a una lectura por minuto multiplica las lecturas por 30, pero el costo solo por 5.4. Los componentes fijos (Composer, API, consultas) se reparten entre más datos.
+- **El costo de la plataforma es despreciable frente al de la energía.** Son US$0.001 por MWh distribuido, alrededor del 0.001 % de un precio mayorista típico de US$80/MWh.
+- **El mayor rubro es Bigtable**, porque sirve a 9 M clientes con respuestas de milisegundos. Si la app tolera segundos, se puede reemplazar por BigQuery con BI Engine (su caché en memoria) y el total baja ~40 %.
 
 ## Palancas de optimización aplicadas
 
 | Palanca | Ahorro |
 |---|---|
-| Batch serverless en vez de clúster permanente | Se paga solo durante el job (prototipo: US$0.65 por todo el histórico) |
+| Batch serverless en vez de un clúster permanente | Se paga solo durante el trabajo (en el prototipo, US$0.65 por todo el histórico) |
 | Parquet en vez de CSV | 6× menos almacenamiento y lectura |
-| Partición por día + clustering por medidor | Las consultas por medidor y rango leen solo lo necesario |
-| Tabla anidada con `STRUCT`/`ARRAY` para análisis por medidor-día | 48× menos bytes en la consulta por segmento Acorn (4.3 GB → 91 MB) |
-| A 1 min, detalle en BigQuery solo 90 días; histórico en el lake | Evita ~200 TB en el warehouse |
-| Ciclo de vida GCS (Nearline/Coldline para raw antiguo) y descuentos por uso comprometido en Kafka y Bigtable | 20–50 % en esos rubros (no incluido en la calculadora) |
+| Partición por día y agrupación por medidor | Las consultas por medidor y rango de fechas leen solo lo necesario |
+| Tabla anidada con `STRUCT`/`ARRAY` para el análisis por medidor-día | 48× menos datos leídos en la consulta por segmento Acorn (4.3 GB → 91 MB) |
+| Con lecturas por minuto, detalle en BigQuery solo de 90 días; el histórico queda en el lake | Evita ~200 TB en el warehouse |
+| Clases de almacenamiento Nearline y Coldline (más baratas, para datos que casi no se leen) para la capa raw antigua; descuentos por compromiso de uso de 1 o 3 años en Kafka y Bigtable | 20–50 % en esos rubros (no incluido en la calculadora) |
 
 ## Valor para el negocio
 
-- **Tarifa dinámica frente a fija (medido).** Con el calendario oficial dToU de 2013 (17,520 medias horas, precios Alto 67.20, Normal 11.76 y Bajo 3.99 p/kWh frente a 14.228 de la tarifa plana) y el consumo real de cada hogar: los 1,038 hogares ToU pagaron en promedio **£475.85 frente a £489.27 con tarifa plana, un 2.74 % menos**, y el **86 %** de ellos ahorró. La tarifa dinámica es más económica que la fija, como exige el caso.
-- **Respuesta a la demanda (medido).** Frente a su propio consumo normal a la misma hora, los hogares ToU consumieron **4.6 % menos durante los eventos de precio Alto** y 6.8 % más en los de precio Bajo; los 4,069 hogares de tarifa estándar, que no recibieron señales, se mantuvieron estables (+1.0 % y +0.5 %). Contra ese grupo de control, la tarifa dinámica **recorta 5.6 % el consumo en la punta** y desplaza 6.3 % hacia las horas baratas.
-- **Valor de la reducción del pico.** Con un consumo medio de 0.43 kW por hogar y la punta 39 % sobre el promedio, la punta agregada es ≈ 4.8 GW. El recorte medido de 5.6 % evita ≈ 270 MW de compras de emergencia. Con una prima supuesta de US$100/MWh durante 4 h en 90 días de invierno, son ≈ US$9.6 M al año, unas 330 veces el costo de la plataforma.
-- **Pronóstico D+1 (medido).** Un modelo de *boosted trees* en BigQuery ML, entrenado con 2012–2013 y evaluado en enero y febrero de 2014, pronostica la carga de cada zona cada 30 min con **4.4 % de error medio (MAPE)**, frente a 6.9 % de suponer que mañana será igual que hoy: un 36 % menos de error en el plan de compras del día siguiente. Por hogar y día, el error ponderado por energía (WAPE) baja de 21.3 % a 18.5 %.
-- **Costo operativo por kWh.** Se reportará en Looker Studio como (costo de plataforma + compras de emergencia evitadas) / kWh distribuido, por zona y mes.
+- **Tarifa dinámica frente a plana (medido).**
+  - **Datos usados:** el calendario oficial de precios de 2013 (17,520 medias horas) y el consumo real de cada hogar.
+  - **Precios:** Alto, 67.20 peniques por kWh; Normal, 11.76; Bajo, 3.99. La tarifa plana cobra 14.228 a toda hora.
+  - **Resultado:** los 1,038 hogares con tarifa dinámica pagaron en promedio **£475.85, frente a £489.27 con tarifa plana: un 2.74 % menos**. El **86 %** de ellos ahorró. La tarifa dinámica resulta más económica que la fija, como exige el caso.
+- **Respuesta a la demanda (medido).** Se compara el consumo de cada hogar durante los eventos con su propio consumo normal a la misma hora.
+  - **Hogares con tarifa dinámica:** consumieron **4.6 % menos durante los eventos de precio Alto** y 6.8 % más durante los de precio Bajo.
+  - **Grupo de control:** los 4,069 hogares con tarifa plana, que no recibieron señales, se mantuvieron estables (+1.0 % y +0.5 %).
+  - **Efecto de la tarifa:** frente al grupo de control, recorta **5.6 % el consumo en la punta** y desplaza 6.3 % hacia las horas baratas.
+- **Valor de la reducción del pico.** Con un consumo medio de 0.43 kW por hogar y la punta 39 % sobre el promedio, la punta agregada es ≈ 4.8 GW. El recorte medido de 5.6 % evita ≈ 270 MW de compras de emergencia. Con una prima supuesta de US$100/MWh durante 4 h en 90 días de invierno, son ≈ US$9.6 M al año: unas 330 veces el costo de la plataforma.
+- **Pronóstico D+1 (medido).** Se usó un modelo de ***boosted trees*** en BigQuery ML: un conjunto de árboles de decisión en el que cada árbol corrige los errores de los anteriores. Se entrenó con 2012–2013 y se evaluó en enero y febrero de 2014, meses que el modelo no vio.
+  - **Por zona:** pronostica la carga de cada media hora con **4.4 % de error porcentual medio** (MAPE, *Mean Absolute Percentage Error*), frente a 6.9 % de suponer que mañana será igual que hoy. Es un 36 % menos de error en el plan de compras del día siguiente.
+  - **Por hogar y día:** el error ponderado por la energía (WAPE, *Weighted Absolute Percentage Error*: error total dividido por el consumo total) baja de 21.3 % a 18.5 %.
+- **Costo operativo neto por kWh.** Se reportará en Looker Studio, por zona y mes, como (costo de la plataforma − compras de emergencia evitadas) / kWh distribuido.
 
 # Plan de recuperación y alta disponibilidad (DRP/HA)
 
+El DRP (*Disaster Recovery Plan*, plan de recuperación ante desastres) dice cómo volver a operar después de una falla grave. La HA (*High Availability*, alta disponibilidad) busca que las fallas comunes no interrumpan el servicio.
+
 ## Objetivos por nivel de servicio
 
-| Servicio | RPO (datos que se pueden perder) | RTO (tiempo para volver) |
+- **RPO** (*Recovery Point Objective*): cuántos datos se pueden perder.
+- **RTO** (*Recovery Time Objective*): cuánto puede tardar el servicio en volver.
+
+| Servicio | RPO | RTO |
 |---|---|---|
-| Ingesta de lecturas | 0: el medidor guarda sus lecturas y el concentrador las reenvía | < 1 min ante fallo de zona |
+| Ingesta de lecturas | 0: el medidor guarda sus lecturas y el concentrador las reenvía | < 1 min ante la caída de una zona |
 | Alertas y respuesta a la demanda | 0 (se reprocesa desde Kafka) | < 10 min |
 | App de clientes (consumo en vivo) | ≤ 1 min | < 1 min (zona), < 1 h (región) |
 | Informes OLAP y pronóstico D+1 | ≤ 24 h | < 4 h |
 
 ## Componentes, fallas y mitigación
 
+Términos de esta tabla:
+
+- ***Checkpoint*:** registro periódico de hasta dónde se procesó.
+- ***Offset*:** la posición de un mensaje dentro de Kafka.
+- **Escritura idempotente:** repetirla no duplica datos.
+
 | Componente | Falla | Mitigación |
 |---|---|---|
-| Medidor o concentrador | Deja de enviar | Spark detecta el silencio por *watermark* y estado y emite `meter.silent`; al reconectar, las lecturas atrasadas se aceptan hasta 72 h y la conciliación nocturna recalcula los agregados; `dq_medidor` marca huecos y rachas de ceros. Nunca se imputa consumo facturable |
-| Kafka | Caída de un broker o una zona | 3 zonas, factor de réplica 3, `min.insync.replicas = 2`, `acks = all`; la conmutación es automática |
-| Spark Streaming | Caída del job o del nodo | *Checkpoints* en GCS dual-region; reinicio automático desde el último offset; escritura idempotente a BigQuery (Storage Write API con *offsets* o `MERGE`) |
-| Lake GCS | Pérdida regional o borrado | Bucket dual-region (nam4) con replicación turbo (RPO 15 min); versionado y *soft delete* de 7 días en curated |
-| BigQuery | Error humano o corrupción | *Time travel* y *fail-safe* de 7 días cada uno; snapshots diarios de gold; réplica de datasets en otra región; reconstrucción total desde el lake (medido: 32 min con 20 DCU) |
-| Bigtable | Caída de zona o región | Dos clústeres replicados con enrutamiento multi-clúster; conmutación en segundos |
-| Cloud Run | Caída de zona | Servicio regional multizona; en producción, balanceador global con una segunda región |
-| Airflow | Caída del entorno | DAGs en Git; entorno recreado por infraestructura como código; tareas idempotentes con *catchup* |
+| Medidor o concentrador | Deja de enviar | Spark detecta el silencio y emite el evento `meter.silent`. Al reconectar, las lecturas atrasadas se aceptan hasta 72 h y el batch nocturno recalcula los agregados. `dq_medidor` marca huecos y rachas de ceros. Nunca se inventa consumo facturable |
+| Kafka | Caída de un servidor (*broker*) o de una zona | 3 zonas y cada mensaje guardado en 3 servidores (factor de réplica 3). Un mensaje se confirma solo cuando al menos 2 copias lo guardaron (`min.insync.replicas = 2`, `acks = all`). La conmutación es automática |
+| Spark Streaming | Caída del programa o del nodo | *Checkpoints* en GCS *dual-region*; reinicio automático desde el último *offset*; escritura idempotente a BigQuery (con la Storage Write API y *offsets*, o con `MERGE`, que inserta o actualiza sin duplicar) |
+| Lake GCS | Pérdida de una región o borrado | Bucket *dual-region* (nam4) con replicación *turbo*: los archivos se copian a la segunda región en menos de 15 min. Versionado y *soft delete* (papelera) de 7 días en `curated` |
+| BigQuery | Error humano o datos corruptos | *Time travel* y *fail-safe*: se puede recuperar una tabla como estaba hasta 7 días atrás, más 7 días de respaldo de Google. Copias diarias (*snapshots*) de gold; réplica de datasets en otra región; reconstrucción total desde el lake (medido: 32 min con 20 DCU) |
+| Bigtable | Caída de una zona o región | Dos clústeres replicados; si uno cae, las consultas van al otro en segundos |
+| Cloud Run | Caída de una zona | Servicio regional repartido en varias zonas; en producción, un balanceador global reparte el tráfico con una segunda región |
+| Firebase | Falla en el envío de avisos | Servicio global de Google; si un aviso no llega, la app muestra el evento al abrirse, porque lo lee de la API |
+| Airflow | Caída del entorno | DAGs guardados en Git; el entorno se recrea con scripts (infraestructura como código); las tareas son idempotentes y Airflow vuelve a correr los días pendientes (*catchup*) |
 
-## Runbook resumido ante caída regional
+## Procedimiento ante la caída de una región (*runbook* resumido)
 
-1. Activar la región secundaria: Bigtable conmuta solo; Cloud Run detrás del balanceador global.
-2. Los concentradores acumulan; Kafka secundario (MirrorMaker 2) recibe el tráfico.
-3. Spark Streaming arranca en la región secundaria desde los *checkpoints* dual-region.
-4. Reprocesar con Spark batch el intervalo afectado desde el lake; validar conteos contra la fuente, como en el prototipo.
-5. Postmortem y prueba de recuperación trimestral (en el taller: matar el job de streaming y verificar que retoma desde el *checkpoint*).
+1. Activar la región secundaria: Bigtable conmuta solo; Cloud Run queda detrás del balanceador global.
+2. Los concentradores acumulan lecturas; el Kafka secundario recibe el tráfico. MirrorMaker 2, la herramienta de Kafka que copia tópicos entre clústeres, lo mantiene al día.
+3. Spark Streaming arranca en la región secundaria desde los *checkpoints* guardados en ambas regiones.
+4. Reprocesar con Spark batch el intervalo afectado desde el lake, y validar los conteos contra la fuente, como en el prototipo.
+5. Analizar la falla después de resuelta (*postmortem*) y probar la recuperación cada trimestre. En el taller: detener el programa de streaming y verificar que retoma desde el *checkpoint*.
 
 # Seguridad y gobernanza
 
-- **Privacidad.** El consumo revela hábitos del hogar: el identificador del medidor va seudonimizado; las vistas OLAP solo publican agregados de al menos 10 hogares; las columnas sensibles llevan *policy tags* de BigQuery.
-- **Mínimo privilegio.** Una cuenta de servicio por función (en el prototipo, `lumina-ingest` y `lumina-spark`); credenciales en Secret Manager y nunca en el repositorio.
-- **Calidad y linaje.** Capas raw, silver y gold separadas; reglas de calidad versionadas; auditoría con Cloud Audit Logs.
+- **Privacidad.** El consumo revela los hábitos del hogar, así que se aplican varias protecciones:
+  - el identificador del medidor va **seudonimizado**, es decir, reemplazado por un código que no identifica a la persona;
+  - las vistas OLAP solo publican agregados de al menos 10 hogares;
+  - las columnas sensibles llevan *policy tags*;
+  - con Firebase Authentication, cada cliente solo puede consultar su propio hogar en la API.
+- **Mínimo privilegio.** Cada función usa su propia **cuenta de servicio**, la identidad de un programa o máquina, no de una persona. En el prototipo son `lumina-ingest`, `lumina-spark` y `lumina-ops`. Las credenciales viven en Secret Manager y nunca en el repositorio de código.
+- **Calidad y linaje.** El **linaje** es la trazabilidad de dónde viene cada dato y qué lo transformó. Las capas raw, silver y gold están separadas, las reglas de calidad tienen versiones y Cloud Audit Logs registra quién accedió a qué.
 
 # Supuestos y fuera de alcance
 
-**Supuestos:** 89 % de 9 M clientes con medidor; zonas y transformadores sintéticos; `tstp` marca el inicio del intervalo; hora DarkSky en UTC; clima observado como sustituto del pronóstico; precios de lista sin descuentos.
+**Supuestos:**
 
-**Fuera de alcance:** facturación real, integración con los sistemas de las 12 distribuidoras, control físico de termostatos y baterías, y el front-end (adjudicado en otra RFP).
+- el 89 % de los 9 M clientes tiene medidor inteligente;
+- las zonas y los transformadores son sintéticos;
+- `tstp`, la columna de fecha y hora del dataset, marca el inicio de cada media hora;
+- la hora de DarkSky está en UTC;
+- el clima observado se usa como si fuera el pronóstico del clima;
+- los precios son de lista, sin descuentos;
+- el pico de la app usa supuestos ilustrativos: 2 M de clientes con la app, 20 % de apertura en 10 minutos y 4 peticiones por sesión;
+- Firebase Cloud Messaging es gratuito. Firebase Authentication puede cobrar por usuario activo según el plan, y no está en la calculadora.
+
+**Fuera de alcance:**
+
+- la facturación real;
+- la integración con los sistemas de las 12 distribuidoras;
+- el control físico de termostatos y baterías;
+- el *front-end*, es decir, las pantallas de la app y la web, adjudicado en otra RFP.
 
 # Próximos pasos
 
 | Entrega | Fecha | Alcance |
 |---|---|---|
-| 2 | 7 de noviembre de 2026 | Streaming: replay → Kafka → Spark Structured Streaming (picos, anomalías, medidores en silencio); DAGs de Airflow |
-| 3 | 20–21 de noviembre de 2026 | Pronóstico D+1, vistas OLAP, API en Cloud Run, demo end-to-end, slides con KPIs y calculadora |
+| 2 | 7 de noviembre de 2026 | Streaming: *replay* de las lecturas reales de 2013, como si llegaran hoy, hacia Kafka y Spark Structured Streaming (picos, anomalías, medidores en silencio); DAGs de Airflow. Ya implementado; falta la corrida del DAG con Spark |
+| 3 | 20–21 de noviembre de 2026 | API en Cloud Run, mantenimiento predictivo, tablero en Looker Studio, demo de punta a punta, slides con los indicadores y la calculadora. El pronóstico D+1, las vistas OLAP y el análisis de tarifas ya están implementados |
+
+# Glosario
+
+| Término | Significado |
+|---|---|
+| Acorn | Clasificación socioeconómica de hogares del Reino Unido (CACI) |
+| API | *Application Programming Interface*: la forma en que un programa pide datos o servicios a otro |
+| API REST | API web que responde en JSON a direcciones como `/hogares/123/consumo` |
+| Batch | Procesamiento por lotes: un bloque grande de datos de una vez, por ejemplo cada noche |
+| BigQuery / BigQuery ML | Data warehouse de Google; BigQuery ML entrena modelos con SQL |
+| Bigtable | Base de datos de Google para millones de consultas pequeñas en milisegundos |
+| *Boosted trees* | Modelo de árboles de decisión en el que cada árbol corrige los errores de los anteriores |
+| Broker | Cada servidor de un clúster de Kafka |
+| Bucket | Contenedor de archivos en GCS |
+| *Checkpoint* | Registro periódico de hasta dónde se procesó, para retomar tras una falla |
+| Cloud Run | Servicio de Google que corre la API y crea o apaga instancias según las peticiones |
+| *Clustering* (agrupación) | Ordenar una tabla por una columna, como el medidor, para leer menos datos |
+| Composer 3 | Airflow operado por Google |
+| Concentrador | Equipo que reúne las lecturas de los medidores de un barrio y las reenvía |
+| `curated` / `rt` | Datasets de BigQuery: historia limpia hasta ayer / resultados del streaming de hoy |
+| D+1 | El día siguiente |
+| DAG | *Directed Acyclic Graph*: un flujo de tareas con un orden y sin ciclos; así define Airflow sus procesos |
+| Data lake | Almacén de archivos barato con todos los datos, crudos y limpios |
+| Data warehouse | Base de datos analítica para consultas SQL rápidas sobre mucha historia |
+| Dataset | En BigQuery, un grupo de tablas |
+| Datos maestros | Catálogos que describen entidades y cambian poco: hogares, segmentos, calendario |
+| DCU | *Data Compute Unit*: unidad de cobro de Spark serverless (1 vCPU con 4 GB) |
+| DR (respuesta a la demanda) | *Demand response*: pedir a los clientes que bajen o muevan su consumo ante una señal de precio |
+| DRP / HA | Plan de recuperación ante desastres / alta disponibilidad |
+| *Dual-region* | Datos guardados en dos regiones a la vez |
+| dToU / ToU | Tarifa por franja horaria (*Time of Use*); la dinámica (dToU) fija el precio de cada media hora un día antes |
+| Firebase | Plataforma de Google para apps; aquí, inicio de sesión (Authentication) y avisos push (Cloud Messaging) |
+| GCS | *Google Cloud Storage*, el almacén de archivos de Google |
+| Grupo de control | Hogares que no recibieron el tratamiento (aquí, la tarifa dinámica) y sirven de comparación |
+| Hora punta | Franja de 17 a 21 h, cuando más energía se consume |
+| IAM | *Identity and Access Management*: control de quién puede hacer qué |
+| Idempotente | Una operación que, si se repite, no duplica el resultado |
+| IoT | *Internet of Things*: dispositivos que envían datos por sí solos |
+| Kafka / tópico | Sistema de mensajería que guarda eventos en orden; un tópico es un canal con nombre |
+| KRaft | Modo de Kafka que no necesita ZooKeeper, un servicio de coordinación adicional |
+| Lakehouse | Combinación de data lake y data warehouse |
+| Lambda / Kappa | Patrones para combinar batch y streaming: Lambda usa ambos caminos; Kappa, solo streaming |
+| Linaje | Trazabilidad de dónde viene cada dato y qué lo transformó |
+| MAPE / WAPE | Error porcentual medio de cada punto / error total dividido por la energía total |
+| Mantenimiento predictivo | Anticipar fallas de equipos antes de que ocurran |
+| Modelo estrella | Tablas de hechos (mediciones) rodeadas de tablas de dimensiones (descripciones) |
+| *Offset* | Posición de un mensaje dentro de Kafka |
+| OLAP | *Online Analytical Processing*: análisis que agrega muchos datos, como el consumo por zona y mes |
+| Parquet | Formato de archivo abierto, por columnas y comprimido |
+| Particionar | Dividir una tabla en bloques (aquí, uno por día) para leer solo lo necesario |
+| Perfil / umbral | Consumo típico de un hogar por hora y tipo de día / valor desde el cual una lectura es anómala |
+| *Policy tags* | Etiquetas de BigQuery que restringen quién ve una columna |
+| Push | Notificación que llega al celular sin que el usuario abra la app |
+| raw / silver / gold | Capas del lake: dato tal como llegó (también *bronze*) / limpio / listo para el análisis |
+| *Replay* | Volver a leer eventos pasados; en el taller, reproducir lecturas de 2013 como si llegaran hoy |
+| RFP | *Request for Proposal*: la solicitud de propuestas de Lumina |
+| RPO / RTO | Datos que se pueden perder / tiempo máximo para volver a operar |
+| Serverless | Servicio que se paga solo mientras trabaja, sin servidores encendidos |
+| Seudonimizar | Reemplazar un identificador por un código que no identifica a la persona |
+| Spark / Structured Streaming | Motor de procesamiento en paralelo / su modo en flujo |
+| Streaming | Procesamiento en flujo: cada dato apenas llega, en segundos |
+| UTC | Tiempo Universal Coordinado, sin cambio de horario de verano |
+| vCPU | Procesador virtual |
+| VM | Máquina virtual: un servidor en la nube |
+| *Watermark* | Tiempo que Spark espera a los datos atrasados antes de cerrar un cálculo |
 
 # Referencias
 
-- Datasets: Smart Meters in London (Kaggle, jeanmidev); Electricity consumption UK 2009–2024 (Kaggle, albertovidalrod); NOAA GSOD (BigQuery público).
-- Precios: [Managed Service for Apache Spark](https://cloud.google.com/dataproc-serverless/pricing), [Managed Service for Apache Kafka](https://cloud.google.com/managed-service-for-apache-kafka/pricing), [Bigtable](https://cloud.google.com/bigtable/pricing), [Managed Service for Apache Airflow](https://cloud.google.com/composer/pricing), [BigQuery](https://cloud.google.com/bigquery/pricing).
+- Datasets: Smart Meters in London (Kaggle, jeanmidev); Electricity consumption UK 2009–2024 (Kaggle, albertovidalrod); NOAA GSOD (BigQuery público); calendario de la tarifa dinámica 2013 (UK Power Networks, Low Carbon London, licencia CC BY 4.0).
+- Precios: [Managed Service for Apache Spark](https://cloud.google.com/dataproc-serverless/pricing), [Managed Service for Apache Kafka](https://cloud.google.com/managed-service-for-apache-kafka/pricing), [Bigtable](https://cloud.google.com/bigtable/pricing), [Managed Service for Apache Airflow](https://cloud.google.com/composer/pricing), [BigQuery](https://cloud.google.com/bigquery/pricing), [Firebase](https://firebase.google.com/pricing).
 - Código, modelo de datos y bitácora de costos: repositorio `dataenergia-lumina` (`docs/02_modelo_datos.md`, `docs/bitacora_costos.log`).

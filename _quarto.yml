@@ -49,6 +49,7 @@ book:
     - docs/AVANCE.md
     - book/reproducir.qmd
     - docs/00_plan_arquitectura.md
+    - docs/entrega1/_e1_glosario.qmd
     - docs/entrega1/_e1_referencias.qmd
 
 filters:
