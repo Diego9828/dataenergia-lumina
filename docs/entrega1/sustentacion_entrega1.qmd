@@ -67,7 +67,7 @@ La arquitectura se organiza en cuatro capas: **ingesta** (recibir los datos), **
 | **Ingesta** | Managed Service for Apache Kafka; Kafka Connect y Storage Transfer para cargas batch | Recibir como flujo las lecturas, la demanda de la red y los eventos de tarifa; traer por lotes el clima y los datos maestros |
 | **Cómputo** | Spark Structured Streaming (24/7); Spark batch *serverless*; BigQuery SQL y BigQuery ML | Detectar picos, anomalías y medidores sin datos en segundos; limpiar y modelar el histórico; pronosticar la demanda D+1 |
 | **Almacenamiento** | Lakehouse en GCS (capas raw, silver y gold en Parquet); BigQuery `curated` (capa batch) y `rt` (capa de velocidad); Bigtable | Fuente de verdad barata y abierta; warehouse analítico de la historia y de lo reciente; serie de tiempo por medidor para la app |
-| **Exposición** | Vistas `lumina_olap`; API REST en Cloud Run; Firebase (Authentication y Cloud Messaging); Looker Studio; tópico `alerts.dr` | Una sola vista de los datos para la app y los informes; inicio de sesión de clientes; avisos al celular; señales de respuesta a la demanda |
+| **Exposición** | Vistas `lumina_olap`; API REST en Cloud Run; Firebase Cloud Messaging; Looker Studio; tópico `alerts.dr` | Una sola vista de los datos para la app y los informes; avisos al celular; señales de respuesta a la demanda |
 | Transversal | Airflow (Composer 3), IAM, Secret Manager, *policy tags*, Cloud Monitoring y Logging | Orquestación, seguridad, gobierno y observabilidad |
 
 **Qué es cada componente**
@@ -87,7 +87,7 @@ La arquitectura se organiza en cuatro capas: **ingesta** (recibir los datos), **
 | **Vistas `lumina_olap`** | Consultas guardadas que se ven como tablas. **OLAP** (*Online Analytical Processing*) es el análisis que agrega muchos datos, como el consumo por zona y mes |
 | **API REST** | Interfaz web: la app pide datos a una dirección (por ejemplo, `/hogares/123/consumo`) y recibe la respuesta en JSON, un formato de texto estructurado |
 | **Cloud Run** | Servicio de Google que corre la API en contenedores: crea instancias cuando llegan peticiones y las apaga cuando no hay |
-| **Firebase** | Plataforma de Google para apps. Se usan dos piezas: **Authentication**, el inicio de sesión de cada cliente, para que solo vea su hogar; y **Cloud Messaging**, el envío de avisos *push* (notificaciones al celular) |
+| **Firebase Cloud Messaging** | Servicio gratuito de Google, parte de la plataforma para apps Firebase, que envía avisos *push* (notificaciones al celular) |
 | **Looker Studio** | Herramienta gratuita de Google para tableros e informes |
 | **Respuesta a la demanda** | En inglés, *demand response* (DR): pedir a los clientes que bajen o muevan su consumo ante una señal de precio. El tópico `alerts.dr` lleva esas señales |
 | **Apache Airflow** | Orquestador: programa y encadena tareas batch (primero limpiar, luego modelar, luego cargar). Cada flujo es un **DAG** (*Directed Acyclic Graph*: tareas con un orden y sin ciclos). **Composer 3** es Airflow operado por Google |
@@ -219,7 +219,8 @@ El *stack* es el conjunto de tecnologías elegidas. Los criterios fueron tres:
 | Serving por medidor | Bigtable | Memorystore (caché en memoria), Cloud SQL, Firestore (la base de datos de Firebase) | Escala agregando nodos y responde en milisegundos, con un costo fijo por nodo. Firestore cobra por cada escritura (US$0.09 por 100 mil en us-central1): guardar 384 M lecturas al día costaría ≈ US$134 k al año en su edición estándar y ≈ US$41 k en la Enterprise, frente a ≈ US$12 k de Bigtable (entre 3 y 11 veces más; a una lectura por minuto, entre 24 y 78 veces) |
 | Orquestación | Apache Airflow (Composer 3 en producción, VM en el taller) | Cloud Workflows, Cloud Scheduler (orquestadores propios de Google) | Estándar abierto; los mismos DAGs funcionan en la VM y en Composer |
 | Formato | Parquet (Iceberg como evolución: agrega versiones y transacciones sobre Parquet) | CSV, Avro (formato por filas) | Columnar y comprimido; lo leen Spark, BigQuery y pandas |
-| Exposición | Cloud Run + Firebase + Looker Studio | GKE (Kubernetes gestionado), App Engine, Looker (versión de pago) | Cloud Run escala a cero y crece con la demanda. Firebase da el inicio de sesión y los avisos push sin construirlos. Looker Studio es gratuito |
+| Exposición | Cloud Run + Firebase Cloud Messaging + Looker Studio | GKE (Kubernetes gestionado), App Engine, Looker (versión de pago) | Cloud Run escala a cero y crece con la demanda. Firebase Cloud Messaging envía los avisos push sin costo. Looker Studio es gratuito |
+| Inicio de sesión de clientes | El sistema de identidad que ya tiene Lumina; la API valida su *token*, la credencial digital que prueba quién inició sesión | Firebase Authentication | Firebase Authentication cobra por usuario activo al mes por encima de 50 mil: con 2 M de clientes costaría ≈ US$91 k al año, tres veces el costo de toda la plataforma |
 
 # Escalabilidad y performance
 
@@ -377,7 +378,7 @@ Términos de esta tabla:
   - el identificador del medidor va **seudonimizado**, es decir, reemplazado por un código que no identifica a la persona;
   - las vistas OLAP solo publican agregados de al menos 10 hogares;
   - las columnas sensibles llevan *policy tags*;
-  - con Firebase Authentication, cada cliente solo puede consultar su propio hogar en la API.
+  - la API valida el token del inicio de sesión que ya tiene Lumina, así que cada cliente solo puede consultar su propio hogar.
 - **Mínimo privilegio.** Cada función usa su propia **cuenta de servicio**, la identidad de un programa o máquina, no de una persona. En el prototipo son `lumina-ingest`, `lumina-spark` y `lumina-ops`. Las credenciales viven en Secret Manager y nunca en el repositorio de código.
 - **Calidad y linaje.** El **linaje** es la trazabilidad de dónde viene cada dato y qué lo transformó. Las capas raw, silver y gold están separadas, las reglas de calidad tienen versiones y Cloud Audit Logs registra quién accedió a qué.
 
@@ -392,14 +393,16 @@ Términos de esta tabla:
 - el clima observado se usa como si fuera el pronóstico del clima;
 - los precios son de lista, sin descuentos;
 - el pico de la app usa supuestos ilustrativos: 2 M de clientes con la app, 20 % de apertura en 10 minutos y 4 peticiones por sesión;
-- Firebase Cloud Messaging es gratuito. Firebase Authentication puede cobrar por usuario activo según el plan, y no está en la calculadora.
+- Firebase Cloud Messaging es gratuito, así que no aparece en la calculadora;
+- los clientes ya inician sesión con un sistema de Lumina, y la API solo valida ese token.
 
 **Fuera de alcance:**
 
 - la facturación real;
 - la integración con los sistemas de las 12 distribuidoras;
 - el control físico de termostatos y baterías;
-- el *front-end*, es decir, las pantallas de la app y la web, adjudicado en otra RFP.
+- el *front-end*, es decir, las pantallas de la app y la web, adjudicado en otra RFP;
+- el inicio de sesión de los clientes, que ya resuelve un sistema de Lumina.
 
 # Próximos pasos
 
@@ -438,7 +441,7 @@ Términos de esta tabla:
 | DRP / HA | Plan de recuperación ante desastres / alta disponibilidad |
 | *Dual-region* | Datos guardados en dos regiones a la vez |
 | dToU / ToU | Tarifa por franja horaria (*Time of Use*); la dinámica (dToU) fija el precio de cada media hora un día antes |
-| Firebase | Plataforma de Google para apps; aquí, inicio de sesión (Authentication) y avisos push (Cloud Messaging) |
+| Firebase Cloud Messaging | Servicio gratuito de Google (parte de Firebase) que envía avisos push al celular |
 | GCS | *Google Cloud Storage*, el almacén de archivos de Google |
 | Grupo de control | Hogares que no recibieron el tratamiento (aquí, la tarifa dinámica) y sirven de comparación |
 | Hora punta | Franja de 17 a 21 h, cuando más energía se consume |
@@ -468,6 +471,7 @@ Términos de esta tabla:
 | Seudonimizar | Reemplazar un identificador por un código que no identifica a la persona |
 | Spark / Structured Streaming | Motor de procesamiento en paralelo / su modo en flujo |
 | Streaming | Procesamiento en flujo: cada dato apenas llega, en segundos |
+| *Token* | Credencial digital que prueba quién inició sesión; la API la valida en cada petición |
 | UTC | Tiempo Universal Coordinado, sin cambio de horario de verano |
 | vCPU | Procesador virtual |
 | VM | Máquina virtual: un servidor en la nube |

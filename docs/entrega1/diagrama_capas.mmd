@@ -30,7 +30,7 @@ flowchart LR
     E1["API REST<br/>Cloud Run"]
     E2["Looker Studio<br/>informes OLAP"]
     E3["Señales de respuesta<br/>a la demanda<br/>tópico alerts.dr"]
-    E4["Firebase<br/>Authentication (login)<br/>Cloud Messaging (push)"]
+    E4["Firebase<br/>Cloud Messaging<br/>avisos push"]
   end
 
   subgraph TRV["Transversal"]
@@ -64,7 +64,6 @@ flowchart LR
   E1 --> APP
   E3 --> E4
   E4 -->|avisos push| APP
-  E4 -.->|login| E1
   T1 -.-> C2
   T1 -.-> C3
 
