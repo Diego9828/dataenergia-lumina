@@ -35,6 +35,7 @@ book:
         - docs/entrega1/_e1_escalabilidad.qmd
         - docs/entrega1/_e1_economia.qmd
         - docs/entrega1/_e1_resiliencia.qmd
+        - docs/entrega1/_e1_riesgos.qmd
     - part: "Parte II · Construcción (Entrega 2)"
       chapters:
         - book/setup.qmd

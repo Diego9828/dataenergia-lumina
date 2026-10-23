@@ -2,7 +2,7 @@
 
 Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 
-**Actualizado:** 2026-10-21 · **Costo acumulado:** ≈ US$1.7 de US$300 · **Recursos encendidos:** ninguno
+**Actualizado:** 2026-10-23 · **Costo acumulado:** ≈ US$1.7 de US$300 · **Recursos encendidos:** ninguno
 
 ## Resumen por entrega
 
@@ -35,6 +35,8 @@ Leyenda: ✅ hecho y verificado · 🟡 parcial o bloqueado · ⬜ pendiente
 - ✅ Diagrama de producción en 4 capas, con capa batch, capa de velocidad y vistas unificadas → [entrega1/diagrama_capas.png](entrega1/diagrama_capas.png)
 - ✅ Sección "Patrón Lambda" con los 4 puntos de sincronización (§ 2.1 del documento)
 - ✅ Calculadora de consumo del primer año → `src/costos/calculadora_consumo.py`
+- ✅ Términos y siglas definidos en su primer uso + Glosario (§ 13)
+- ✅ Versión para comité ejecutivo (comentario de la profesora): resumen con decisión, inversión vs. beneficio, riesgos y hoja de ruta; DRP con regiones us-central1/us-east1, política de respaldos, estrategia y costo de la resiliencia (+US$6.9 k/año), runbook con roles y simulacros → [entrega1/diagrama_regiones.png](entrega1/diagrama_regiones.png)
 - ⬜ **Revisar supuestos marcados y entregar (alumno, 24-oct)**
 
 ### Fase 3 · Streaming (camino tiempo real)

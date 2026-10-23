@@ -18,23 +18,56 @@ format:
 
 > Documento elaborado con asistencia de IA generativa (Claude). Las cifras de costo usan precios de lista de Google Cloud (región us-central1, octubre de 2026) y deben validarse con la Google Cloud Pricing Calculator; las decisiones técnicas, con el docente.
 >
-> Cada término técnico y cada sigla se explican la primera vez que aparecen. El Glosario (§ 12) los reúne todos.
+> Cada término técnico y cada sigla se explican la primera vez que aparecen. El Glosario (§ 13) los reúne todos.
 
 # Resumen ejecutivo
 
-Lumina Energía necesita convertir las lecturas de 8 millones de medidores inteligentes, que hoy solo se usan para facturar, en cuatro capacidades:
+Este documento presenta al comité ejecutivo, de negocio y técnico, la arquitectura de datos propuesta para Lumina Energía: qué problema resuelve, cuánto cuesta, qué beneficio trae, qué riesgos tiene y cómo se implementaría. Las secciones 2 a 9 dan el detalle técnico que sostiene cada cifra.
 
-- decisiones de red en tiempo real;
-- planes diarios de demanda;
-- informes operativos;
-- **mantenimiento predictivo**, es decir, anticipar fallas de medidores y equipos antes de que ocurran.
+## El problema
 
-Proponemos un **lakehouse** en Google Cloud, que combina dos tipos de almacén:
+- **La hora punta es cara.** Entre las 17 y las 21 h, la demanda supera al promedio del día en 39 %, y en los días más fríos cada hogar consume 33 % más. Los transformadores se sobrecargan y la red compra energía de emergencia a precios altos.
+- **Los datos existen, pero no se usan.** Casi nueve de cada diez de los 9 M de clientes tienen un medidor inteligente que reporta cada 30 minutos. Esas lecturas solo sirven para facturar a fin de mes.
+- **Las doce distribuidoras no comparten datos.** Nadie ve la red completa, así que no se puede balancear la carga entre zonas ni detectar fallas y pérdidas a escala regional.
+
+## La propuesta
+
+Una plataforma de datos única en Google Cloud que recibe las lecturas de 8 millones de medidores y las convierte en cuatro capacidades:
+
+- **decisiones de red en tiempo real:** picos, anomalías y medidores caídos detectados en segundos;
+- **planes diarios de demanda:** el pronóstico de mañana por zona;
+- **informes operativos:** consumo por segmento y efecto de la tarifa dinámica;
+- **mantenimiento predictivo:** anticipar fallas de medidores y equipos antes de que ocurran.
+
+Técnicamente es un **lakehouse**, que combina dos tipos de almacén:
 
 - un *data lake*, un almacén de archivos barato que guarda todos los datos, crudos y limpios;
 - un *data warehouse*, una base de datos analítica para consultas rápidas en SQL. Aquí es BigQuery.
 
 Las piezas usan **APIs de código abierto**: Kafka, Spark, Airflow y el formato Parquet, descritos más abajo en la arquitectura. Una API (interfaz de programación) es la forma en que un programa se comunica con otro; si es abierta, el mismo código funciona con otro proveedor. Las piezas corren como **servicios gestionados**: Google opera los servidores y Lumina solo los usa.
+
+La propuesta no es solo un diseño. Un prototipo en Google Cloud ya procesó los 167.8 M de lecturas reales del caso, con coincidencia exacta con la fuente, por ≈ US$1.7.
+
+## Lo que se pide al comité
+
+1. **Aprobar la arquitectura** como plataforma de datos común de las doce distribuidoras.
+2. **Aprobar el costo de operación del primer año: ≈ US$36 k.** Son ≈ US$29 k de plataforma (§ 7) más ≈ US$7 k para operar desde una segunda región si la principal cae (§ 8).
+3. **Aprobar un piloto de 4 meses en 2 zonas** antes del despliegue total (§ 11), con criterios de éxito medibles.
+4. **Encargar los acuerdos de intercambio de datos** con las distribuidoras, que son la condición para empezar.
+
+## Inversión y beneficio
+
+| Concepto | Valor anual | Base |
+|---|---|---|
+| Costo de la plataforma | ≈ US$29 k | Calculadora con precios de lista (§ 7) |
+| Costo de la recuperación ante desastres | ≈ US$7 k adicionales | Segunda región en espera (§ 8) |
+| **Costo total** | **≈ US$36 k** | US$0.0004 por medidor al mes |
+| Compras de emergencia evitadas | ≈ US$9.6 M | Recorte medido de 5.6 % en la punta y una prima supuesta de US$100/MWh (§ 7) |
+| Ahorro para los clientes con tarifa dinámica | −2.74 % en su factura | Calendario oficial de precios 2013 y consumo real |
+
+El beneficio estimado es unas **270 veces el costo total**. Aunque el recorte en DataLandia fuera la décima parte del medido en Londres, la plataforma se pagaría unas 27 veces. Esta cifra es la más sensible del documento: depende de la prima de emergencia supuesta y de que los clientes respondan como en el experimento de 2013. Por eso el piloto la mide antes del despliegue total.
+
+## Indicadores
 
 | Indicador | Valor | Fuente |
 |---|---|---|
@@ -50,6 +83,26 @@ Las piezas usan **APIs de código abierto**: Kafka, Spark, Airflow y el formato 
 | Costo del prototipo hasta hoy | ≈ US$1.7 de un tope de US$300 | Bitácora de costos |
 
 **Tarifas.** Con la **tarifa plana** (en los datos, `Std`, estándar), el kWh cuesta lo mismo a toda hora. Con la **tarifa dinámica**, el precio de cada media hora es Alto, Normal o Bajo y se anuncia un día antes. En los datos se llama **ToU** (*Time of Use*, tarifa por franja horaria), y su variante dinámica de 2013, **dToU**. En 2013, unos 1,100 hogares de Londres probaron la tarifa dinámica y el resto siguió con la plana. Esos hogares con tarifa plana son el **grupo de control**: muestran cómo se consume sin señales de precio.
+
+## Riesgos principales
+
+El detalle y su mitigación están en la sección de riesgos (§ 10).
+
+- **Datos de las distribuidoras.** Si no los comparten a tiempo o con formatos distintos, el proyecto se retrasa. Se mitiga con acuerdos firmados antes del piloto.
+- **Beneficio menor al estimado.** Si los clientes responden menos a la tarifa dinámica, baja el ahorro. Se mitiga midiendo con grupo de control en el piloto.
+- **Privacidad.** El consumo revela hábitos del hogar. Se mitiga con identificadores seudonimizados, agregados de al menos 10 hogares y datos en una jurisdicción aprobada.
+
+## Hoja de ruta
+
+El detalle está en la hoja de ruta de implementación (§ 11).
+
+| Fase | Meses | Resultado |
+|---|---|---|
+| 0 · Preparación | 0–1 | Acuerdos de datos, cuentas y regiones aprobadas |
+| 1 · Piloto en 2 zonas | 1–4 | Alertas en tiempo real y tablero; criterios de éxito medidos |
+| 2 · Despliegue en las 8 zonas | 4–9 | App de clientes, pronóstico D+1 diario y región secundaria probada |
+| 3 · Tarifa dinámica | 9–12 | Eventos de precio y avisos al celular, con su efecto medido |
+| 4 · Crecimiento | Año 2 | Lectura cada minuto y otras regiones metropolitanas |
 
 # Arquitectura end-to-end
 
@@ -136,6 +189,8 @@ El prototipo usa los mismos motores y formatos, con menos capacidad, para manten
 
 # Integración multifuente
 
+Lumina recibe datos de fuentes muy distintas: medidores que reportan cada media hora, el operador de la red, el clima, el calendario y los catálogos de clientes. Su valor aparece al cruzarlos, por ejemplo para saber cuánto consume un segmento de hogares en un día frío de semana. Esta sección describe cada fuente, cómo se captura y con qué columna se une a las demás.
+
 ## Fuentes y mecanismo de captura
 
 La **llave de cruce** es la columna con la que se unen las fuentes: `lclid` es el identificador del medidor y `ts_utc`, la fecha y hora de la lectura.
@@ -184,6 +239,8 @@ Las fuentes de la tabla:
 
 # Definición de ingesta y almacenamiento
 
+No todos los datos llegan igual ni se consultan igual, así que cada uno entra por el mecanismo que le corresponde y se guarda en el motor adecuado. Las lecturas llegan sin parar y se reciben en flujo; los catálogos y el clima cambian poco y se cargan por lotes. Para guardar, el criterio es el uso: lo histórico va al lake, que es barato; el análisis, al warehouse; y lo que la app consulta miles de veces por segundo, a una base de datos de baja latencia.
+
 ## Ingesta
 
 | Flujo | Mecanismo | Por qué |
@@ -223,6 +280,8 @@ El *stack* es el conjunto de tecnologías elegidas. Los criterios fueron tres:
 | Inicio de sesión de clientes | El sistema de identidad que ya tiene Lumina; la API valida su *token*, la credencial digital que prueba quién inició sesión | Firebase Authentication | Firebase Authentication cobra por usuario activo al mes por encima de 50 mil: con 2 M de clientes costaría ≈ US$91 k al año, tres veces el costo de toda la plataforma |
 
 # Escalabilidad y performance
+
+La plataforma debe crecer en dos direcciones sin rediseñarse: más datos por medidor (de una lectura cada 30 minutos a una por minuto, 30 veces más) y más regiones metropolitanas. Además, debe soportar los picos de corto plazo sin perder lecturas. Esta sección dimensiona la carga, distingue qué crece de forma planificada y qué crece de golpe, y explica cómo responde cada capa.
 
 ## Modelo de carga
 
@@ -282,6 +341,8 @@ Términos de esta tabla:
 
 # Justificación económica y optimización de costos
 
+Esta sección responde dos preguntas del comité: cuánto cuesta operar la plataforma en producción y si vale la pena. El costo se calcula con precios de lista y supuestos explícitos, que el script de la calculadora permite cambiar. El beneficio se estima con resultados medidos sobre los datos reales del caso.
+
 ## Calculadora de consumo del primer año (producción)
 
 Supuestos:
@@ -330,19 +391,99 @@ El almacenamiento crece de forma lineal durante el año. El script `src/costos/c
 
 # Plan de recuperación y alta disponibilidad (DRP/HA)
 
-El DRP (*Disaster Recovery Plan*, plan de recuperación ante desastres) dice cómo volver a operar después de una falla grave. La HA (*High Availability*, alta disponibilidad) busca que las fallas comunes no interrumpan el servicio.
+Lumina opera una red eléctrica: si la plataforma deja de recibir lecturas, el centro de control pierde visibilidad justo cuando más la necesita, por ejemplo en una ola de frío. Este plan distingue dos tipos de eventos:
 
-## Objetivos por nivel de servicio
+- **Fallas comunes**, como la caída de un servidor o de un centro de datos. Las cubre la **alta disponibilidad** (HA, *High Availability*): cada servicio corre en varias zonas y se recupera solo, sin intervención humana.
+- **Desastres**, como la pérdida de una región completa, un borrado masivo por error o un ataque que cifra datos (*ransomware*). Los cubre el **plan de recuperación ante desastres** (DRP, *Disaster Recovery Plan*): una segunda región, respaldos independientes y un procedimiento con responsables.
 
-- **RPO** (*Recovery Point Objective*): cuántos datos se pueden perder.
-- **RTO** (*Recovery Time Objective*): cuánto puede tardar el servicio en volver.
+Una distinción guía todo el plan: **replicar no es respaldar**. Una réplica copia cada cambio a otro lugar en segundos, así que protege contra fallas de hardware; pero si alguien borra una tabla, la réplica también la borra. Un **respaldo** (*backup*) es una copia de un momento dado, guardada aparte, que permite volver atrás. La plataforma usa ambos.
 
-| Servicio | RPO | RTO |
+## Regiones de implementación
+
+Una **región** de Google Cloud es un área geográfica con varios centros de datos; cada centro de datos independiente dentro de ella es una **zona**, con su propia energía, red y refrigeración.
+
+| Rol | Región | Ubicación | Qué corre ahí |
+|---|---|---|---|
+| **Principal** | us-central1 | Iowa, EE. UU. (3 zonas) | Todo el procesamiento en operación normal |
+| **Secundaria** | us-east1 | Carolina del Sur, EE. UU. (3 zonas), a ~1,600 km | Réplicas, respaldos y servicios en espera, listos para tomar la operación |
+
+![Regiones de implementación, réplicas y respaldos](diagrama_regiones.png){width=100%}
+
+**Por qué este par de regiones:**
+
+- **Distancia suficiente:** un desastre natural o un corte eléctrico regional difícilmente afecta a ambas a la vez.
+- **Misma jurisdicción**, para cumplir con una misma regulación de datos.
+- **Mismo nivel de precios**, y forman el par *dual-region* nam4 de Cloud Storage, que replica los archivos entre ambas sin configuración adicional.
+- **Coherencia con el prototipo**, que ya corre en us-central1.
+
+**Residencia de datos.** Es la exigencia legal de que los datos se guarden en un país o territorio determinado. DataLandia es ficticia, así que este par de regiones es un supuesto. Si su regulación exigiera, por ejemplo, que los datos queden en Sudamérica, se usaría southamerica-east1 (São Paulo) como principal y southamerica-west1 (Santiago) como secundaria, sin cambiar el diseño.
+
+## Estrategia de recuperación por servicio
+
+Hay cuatro estrategias clásicas, de la más barata y lenta a la más cara y rápida. Cada servicio usa la que justifica su importancia para el negocio.
+
+| Estrategia | Qué significa | Tiempo de recuperación típico | Costo |
+|---|---|---|---|
+| Respaldo y restauración | Solo hay copias; el servicio se recrea cuando hace falta | Horas | Muy bajo |
+| Luz piloto (*pilot light*) | Lo mínimo está encendido (datos replicados); el resto se crea al conmutar | Decenas de minutos | Bajo |
+| Espera tibia (*warm standby*) | Una versión pequeña del servicio corre siempre y crece al conmutar | Minutos | Medio |
+| Activo-activo | Ambas regiones atienden a la vez | Segundos | Alto |
+
+| Servicio | Estrategia | Por qué |
 |---|---|---|
-| Ingesta de lecturas | 0: el medidor guarda sus lecturas y el concentrador las reenvía | < 1 min ante la caída de una zona |
-| Alertas y respuesta a la demanda | 0 (se reprocesa desde Kafka) | < 10 min |
-| App de clientes (consumo en vivo) | ≤ 1 min | < 1 min (zona), < 1 h (región) |
-| Informes OLAP y pronóstico D+1 | ≤ 24 h | < 4 h |
+| Ingesta (Kafka) | Espera tibia: un clúster mínimo en us-east1 recibe copia de los tópicos con MirrorMaker 2, la herramienta de Kafka que copia tópicos entre clústeres | Sin ingesta no hay visibilidad de la red; los medidores retienen lecturas, pero no indefinidamente |
+| Streaming (Spark) | Espera tibia: 1 nodo encendido en us-east1 que crece a 3 al conmutar | Las alertas de picos y fallas deben volver en minutos |
+| App de clientes (Bigtable y Cloud Run) | Activo-activo: Bigtable con un clúster por región; Cloud Run en ambas, detrás de un balanceador global | Es lo que ven los clientes; Cloud Run escala a cero, así que la segunda región casi no cuesta |
+| Lake (Cloud Storage) | Activo-activo para silver y gold (*dual-region*); respaldo diario para raw | La historia es la fuente de todo lo demás |
+| Warehouse e informes (BigQuery) | Luz piloto: el dataset `curated` se replica a la segunda región | Los informes toleran horas; replicar es más barato que reconstruir |
+| Batch y orquestación (Spark serverless y Airflow) | Respaldo y restauración: se recrean desde Git y los respaldos | Corren una vez al día; Spark serverless no tiene servidores que mantener encendidos |
+
+## Costo de la resiliencia
+
+| Concepto | USD al año | ¿Ya está en la calculadora (§ 7)? |
+|---|---:|---|
+| Segundo clúster de Bigtable (us-east1) | ≈ 5,950 | Sí |
+| Lake *dual-region* para silver, gold y *checkpoints* | Incluido en Cloud Storage | Sí |
+| Kafka mínimo en us-east1 y tráfico entre regiones | ≈ 3,500 | No |
+| Nodo de Spark Streaming en espera | ≈ 2,050 | No |
+| Réplica del dataset `curated` y *snapshots* de BigQuery | ≈ 850 | No |
+| Respaldos de Bigtable (7 días) y copia de raw en clase Archive | ≈ 300 | No |
+| Balanceador global para Cloud Run | ≈ 220 | No |
+| **Adicional a la calculadora** | **≈ 6,900** | Sube el total de ≈ US$29 k a ≈ US$36 k (+24 %) |
+
+Es una decisión del comité: sin la segunda región en espera, Lumina ahorraría ≈ US$6.9 k al año, pero ante la caída de una región la ingesta y las alertas tardarían horas en volver, en lugar de minutos. Una sola hora punta sin visibilidad de la red puede costar más que ese ahorro.
+
+## Objetivos de recuperación por servicio
+
+Dos indicadores fijan cuánto se protege cada servicio:
+
+- **RPO** (*Recovery Point Objective*, punto de recuperación): cuántos datos se pueden perder. Lo determina **cada cuánto se replica o se respalda**: si el último respaldo es de anoche, se pierde lo ocurrido desde entonces.
+- **RTO** (*Recovery Time Objective*, tiempo de recuperación): cuánto puede tardar el servicio en volver. Lo determina la estrategia elegida.
+
+| Servicio | RPO | Qué garantiza el RPO | RTO (zona / región) |
+|---|---|---|---|
+| Ingesta de lecturas | 0 | El medidor y el concentrador guardan sus lecturas hasta 72 h y las reenvían; Kafka confirma cada mensaje solo cuando lo guardaron 2 de sus 3 copias | < 1 min / < 30 min |
+| Alertas y respuesta a la demanda | 0 | Kafka retiene 7 días; Spark retoma desde su último *checkpoint* | < 10 min / < 30 min |
+| App de clientes | ≤ 1 min | Bigtable replica entre regiones en segundos | < 1 min / < 15 min |
+| Historia en el lake | ≤ 15 min | Replicación *turbo* del bucket *dual-region* y copia diaria de raw | Sin corte (la otra región ya tiene los archivos) |
+| Informes OLAP y pronóstico D+1 | ≤ 24 h | Réplica del dataset y *snapshot* diario | < 1 h / < 4 h |
+
+## Política de respaldos
+
+La política sigue la regla **3-2-1**: al menos 3 copias de los datos importantes, en 2 servicios o medios distintos, y 1 fuera de la región principal. Las copias críticas son **inmutables**: una política de retención bloqueada (*Bucket Lock*) impide que nadie, ni siquiera un administrador, las borre o modifique antes de tiempo. Eso protege contra errores humanos y contra *ransomware*.
+
+| Qué se protege | Tipo de copia | Frecuencia | Retención | Dónde vive la copia | Cómo se restaura |
+|---|---|---|---|---|---|
+| Lecturas originales (capa raw) | Copia a un bucket aparte, en clase Archive y con retención bloqueada | Diaria | 5 años (supuesto regulatorio) | us-east1 | Se copian de vuelta los días afectados; luego se reprocesan |
+| Capas silver y gold del lake | Réplica *dual-region*, versiones de cada archivo y papelera (*soft delete*) | Continua | Versiones: 30 días; papelera: 7 días | Ambas regiones | Recuperar la versión anterior del archivo, en minutos |
+| Tablas de BigQuery | *Time travel* (automático), *snapshot* diario de las tablas gold y réplica del dataset | Continua y diaria | *Time travel*: 7 días; *snapshots*: 30 días | Segunda región | Restaurar el *snapshot* en minutos, o reconstruir desde el lake (medido: 32 min) |
+| Serie de tiempo de la app (Bigtable) | Réplica entre clústeres y respaldo administrado | Continua y diaria | Respaldos: 7 días | us-east1 | Restaurar el respaldo, o recargar los últimos 7 días desde el lake |
+| Eventos en Kafka | No se respaldan: Kafka es un amortiguador de 7 días | — | 7 días | Su contenido ya está en raw (Kafka Connect) y en el clúster secundario (MirrorMaker 2) | Volver a leer desde raw |
+| Progreso del streaming (*checkpoints*) | Archivos en el lake *dual-region* | Cada micro-lote | Últimos 7 días | Ambas regiones | Spark retoma solo |
+| Orquestación (Airflow) | *Snapshot* del entorno de Composer; los DAGs viven en Git | Diaria y en cada cambio | 30 días | Cloud Storage y GitHub | Recrear el entorno (~1 h) |
+| Código, configuración e infraestructura | Repositorio Git | En cada cambio | Permanente | GitHub, fuera de Google Cloud | Volver a ejecutar los scripts |
+| Contraseñas y claves | Versiones en Secret Manager | En cada cambio | Permanente | Replicación automática de Google | Elegir la versión anterior |
+| Modelos de pronóstico | Versiones en BigQuery ML | En cada reentrenamiento | 3 últimas | Dataset replicado | Reentrenar (~15 min; medido: ≤ US$0.42) |
 
 ## Componentes, fallas y mitigación
 
@@ -357,22 +498,51 @@ Términos de esta tabla:
 | Medidor o concentrador | Deja de enviar | Spark detecta el silencio y emite el evento `meter.silent`. Al reconectar, las lecturas atrasadas se aceptan hasta 72 h y el batch nocturno recalcula los agregados. `dq_medidor` marca huecos y rachas de ceros. Nunca se inventa consumo facturable |
 | Kafka | Caída de un servidor (*broker*) o de una zona | 3 zonas y cada mensaje guardado en 3 servidores (factor de réplica 3). Un mensaje se confirma solo cuando al menos 2 copias lo guardaron (`min.insync.replicas = 2`, `acks = all`). La conmutación es automática |
 | Spark Streaming | Caída del programa o del nodo | *Checkpoints* en GCS *dual-region*; reinicio automático desde el último *offset*; escritura idempotente a BigQuery (con la Storage Write API y *offsets*, o con `MERGE`, que inserta o actualiza sin duplicar) |
-| Lake GCS | Pérdida de una región o borrado | Bucket *dual-region* (nam4) con replicación *turbo*: los archivos se copian a la segunda región en menos de 15 min. Versionado y *soft delete* (papelera) de 7 días en `curated` |
+| Lake GCS | Pérdida de una región o borrado | Capas silver y gold en un bucket *dual-region* (nam4) con replicación *turbo*: los archivos se copian a la segunda región en menos de 15 min. Versionado y *soft delete* (papelera) de 7 días. La capa raw tiene además una copia diaria inmutable en us-east1 (política de respaldos) |
 | BigQuery | Error humano o datos corruptos | *Time travel* y *fail-safe*: se puede recuperar una tabla como estaba hasta 7 días atrás, más 7 días de respaldo de Google. Copias diarias (*snapshots*) de gold; réplica de datasets en otra región; reconstrucción total desde el lake (medido: 32 min con 20 DCU) |
-| Bigtable | Caída de una zona o región | Dos clústeres replicados; si uno cae, las consultas van al otro en segundos |
+| Bigtable | Caída de una zona o región | Dos clústeres replicados, uno por región; si uno cae, las consultas van al otro en segundos. Respaldo diario contra borrados |
 | Cloud Run | Caída de una zona | Servicio regional repartido en varias zonas; en producción, un balanceador global reparte el tráfico con una segunda región |
 | Firebase | Falla en el envío de avisos | Servicio global de Google; si un aviso no llega, la app muestra el evento al abrirse, porque lo lee de la API |
 | Airflow | Caída del entorno | DAGs guardados en Git; el entorno se recrea con scripts (infraestructura como código); las tareas son idempotentes y Airflow vuelve a correr los días pendientes (*catchup*) |
 
-## Procedimiento ante la caída de una región (*runbook* resumido)
+## Procedimiento ante la caída de una región (*runbook*)
 
-1. Activar la región secundaria: Bigtable conmuta solo; Cloud Run queda detrás del balanceador global.
-2. Los concentradores acumulan lecturas; el Kafka secundario recibe el tráfico. MirrorMaker 2, la herramienta de Kafka que copia tópicos entre clústeres, lo mantiene al día.
-3. Spark Streaming arranca en la región secundaria desde los *checkpoints* guardados en ambas regiones.
-4. Reprocesar con Spark batch el intervalo afectado desde el lake, y validar los conteos contra la fuente, como en el prototipo.
-5. Analizar la falla después de resuelta (*postmortem*) y probar la recuperación cada trimestre. En el taller: detener el programa de streaming y verificar que retoma desde el *checkpoint*.
+Un *runbook* es el procedimiento paso a paso que sigue el equipo en un incidente, para no improvisar.
+
+**Roles**
+
+| Rol | Quién | Qué hace |
+|---|---|---|
+| Responsable de guardia | Ingeniero de plataforma de datos, turno 24/7 | Recibe la alarma, confirma la falla y activa el procedimiento |
+| Comité de crisis | Gerente de operaciones de red, líder de la plataforma y comunicaciones | Declara el desastre y autoriza la conmutación a la región secundaria |
+| Comunicaciones | Área de comunicaciones de Lumina | Informa al centro de control, a las distribuidoras, a los clientes y, si la norma lo exige, al regulador |
+
+**Pasos**
+
+| # | Paso | Tiempo objetivo |
+|---|---|---|
+| 1 | **Detectar.** Cloud Monitoring alerta si no se procesan lecturas durante 5 min; la guardia revisa el estado de Google Cloud | 0–5 min |
+| 2 | **Declarar el desastre.** Si la región no se recupera en 15 min o Google confirma un incidente regional, el comité de crisis autoriza conmutar | 15 min |
+| 3 | **Conmutar.** Bigtable y Cloud Run pasan solos a us-east1. Los concentradores envían al Kafka secundario, que ya tiene los tópicos replicados. Spark Streaming crece de 1 a 3 nodos y retoma desde los *checkpoints* | 15–30 min |
+| 4 | **Verificar.** Las lecturas por minuto vuelven al nivel esperado, las alertas fluyen y la app responde | 30–45 min |
+| 5 | **Recuperar el batch.** Airflow se recrea en us-east1 desde Git y su respaldo; Spark reprocesa el intervalo afectado desde el lake y se validan los conteos contra la fuente, como en el prototipo | 1–4 h |
+| 6 | **Informar.** Comunicaciones emite un reporte de estado cada hora hasta el cierre | Continuo |
+
+**Vuelta a la región principal.** Se vuelve cuando la región principal está estable durante 24 h: se sincronizan los datos en sentido inverso y se conmuta de madrugada, nunca en la hora punta. Al cierre, el equipo analiza la falla sin buscar culpables (*postmortem*) y actualiza este procedimiento.
+
+**Simulacros.** Un plan que no se prueba no funciona el día que se necesita.
+
+| Prueba | Frecuencia | Criterio de éxito |
+|---|---|---|
+| Restaurar una tabla de BigQuery desde un *snapshot* | Mensual | < 30 min y los mismos conteos |
+| Detener el streaming y verificar que retoma desde el *checkpoint* (también se prueba en el taller) | Mensual | Sin lecturas perdidas ni duplicadas |
+| Restaurar un respaldo de Bigtable | Trimestral | < 1 h |
+| Conmutación completa a us-east1 ("día de juego"), fuera de la hora punta | Semestral | RTO dentro de los objetivos de la tabla anterior |
+| Reconstruir todo el warehouse desde el lake | Anual | Conteos exactos; medido en el prototipo: 32 min con 20 DCU |
 
 # Seguridad y gobernanza
+
+Las lecturas de un medidor revelan cuándo una familia está en casa, duerme o viaja: son datos personales. La plataforma los protege con privacidad desde el diseño, permisos mínimos y trazabilidad de cada dato.
 
 - **Privacidad.** El consumo revela los hábitos del hogar, así que se aplican varias protecciones:
   - el identificador del medidor va **seudonimizado**, es decir, reemplazado por un código que no identifica a la persona;
@@ -381,6 +551,43 @@ Términos de esta tabla:
   - la API valida el token del inicio de sesión que ya tiene Lumina, así que cada cliente solo puede consultar su propio hogar.
 - **Mínimo privilegio.** Cada función usa su propia **cuenta de servicio**, la identidad de un programa o máquina, no de una persona. En el prototipo son `lumina-ingest`, `lumina-spark` y `lumina-ops`. Las credenciales viven en Secret Manager y nunca en el repositorio de código.
 - **Calidad y linaje.** El **linaje** es la trazabilidad de dónde viene cada dato y qué lo transformó. Las capas raw, silver y gold están separadas, las reglas de calidad tienen versiones y Cloud Audit Logs registra quién accedió a qué.
+
+# Riesgos y mitigación
+
+Un **riesgo** es algo que podría pasar y afectar el proyecto. Se califica por su **probabilidad** y su **impacto**, y cada uno tiene una mitigación y un responsable.
+
+| # | Riesgo | Probabilidad | Impacto | Mitigación | Responsable |
+|---|---|---|---|---|---|
+| 1 | Las distribuidoras no entregan sus datos a tiempo o con formatos distintos | Alta | Alto | Acuerdos de intercambio firmados en la fase 0; la capa raw acepta cada formato y la capa silver lo normaliza | Dirección de Lumina |
+| 2 | Lecturas incompletas: en el prototipo, el 9 % de los medidores tiene huecos o rachas de ceros | Alta | Medio | Diagnóstico diario por medidor (`dq_medidor`), alerta de medidor silencioso y nunca inventar consumo facturable | Plataforma de datos |
+| 3 | El beneficio real es menor que el estimado (≈ US$9.6 M/año) | Media | Alto | El piloto mide la respuesta a la tarifa con grupo de control antes del despliegue; aun con un décimo del efecto, la plataforma se paga sola | Negocio y analítica |
+| 4 | Incumplir normas de privacidad o de residencia de datos | Media | Alto | Identificadores seudonimizados, agregados de al menos 10 hogares, permisos por columna y regiones aprobadas por el área legal | Legal y seguridad |
+| 5 | El costo supera lo previsto, por ejemplo al pasar a lectura por minuto | Media | Medio | Presupuestos con alertas, tope de datos por consulta, tablas particionadas y revisión trimestral de la calculadora | Plataforma de datos y finanzas |
+| 6 | Caída de una región de Google Cloud | Baja | Alto | Plan de recuperación con segunda región y simulacros (§ 8) | Plataforma de datos |
+| 7 | Borrado masivo por error o por *ransomware* | Baja | Alto | Respaldos inmutables fuera de la región, mínimo privilegio y auditoría de accesos | Seguridad |
+| 8 | Dependencia de un proveedor | Media | Medio | APIs abiertas (Kafka, Spark, Airflow, Parquet): el código migra a otra nube cambiando la configuración | Arquitectura |
+| 9 | El equipo no tiene experiencia con estas tecnologías | Media | Medio | Servicios gestionados, capacitación durante el piloto y *runbooks* documentados | Plataforma de datos |
+
+# Hoja de ruta de implementación
+
+El despliegue avanza por fases. Cada fase termina con criterios de éxito medibles, y el comité decide si se pasa a la siguiente.
+
+| Fase | Meses | Alcance | Criterio para avanzar |
+|---|---|---|---|
+| 0 · Preparación | 0–1 | Acuerdos de datos con las distribuidoras; cuentas, permisos y regiones aprobados por legal; equipo conformado | Acuerdos firmados con al menos las distribuidoras de las 2 zonas piloto |
+| 1 · Piloto | 1–4 | 2 zonas (~1 M de medidores): ingesta en tiempo real, alertas de picos y fallas, lake, warehouse y tablero de operación | ≥ 99.9 % de lecturas recibidas; alertas en < 1 min; consumo conciliado con la facturación |
+| 2 · Despliegue | 4–9 | Las 8 zonas y las 12 distribuidoras; app de clientes con Bigtable y la API; pronóstico D+1 diario; región secundaria y primer simulacro | Error del pronóstico por zona ≤ 5 %; conmutación de región dentro del RTO |
+| 3 · Tarifa dinámica | 9–12 | Eventos de precio Alto y Bajo, avisos push y medición del efecto frente a un grupo de control | Recorte medido en la punta y ahorro de los clientes, frente al grupo de control |
+| 4 · Crecimiento | Año 2 | Lectura cada minuto por zonas y otras regiones metropolitanas | Costo por lectura dentro de la calculadora |
+
+## Entregas del taller
+
+El prototipo académico avanza en paralelo con este calendario:
+
+| Entrega | Fecha | Alcance |
+|---|---|---|
+| 2 | 7 de noviembre de 2026 | Streaming: *replay* de las lecturas reales de 2013, como si llegaran hoy, hacia Kafka y Spark Structured Streaming (picos, anomalías, medidores en silencio); DAGs de Airflow. Ya implementado; falta la corrida del DAG con Spark |
+| 3 | 20–21 de noviembre de 2026 | API en Cloud Run, mantenimiento predictivo, tablero en Looker Studio, demo de punta a punta, slides con los indicadores y la calculadora. El pronóstico D+1, las vistas OLAP y el análisis de tarifas ya están implementados |
 
 # Supuestos y fuera de alcance
 
@@ -395,6 +602,10 @@ Términos de esta tabla:
 - el pico de la app usa supuestos ilustrativos: 2 M de clientes con la app, 20 % de apertura en 10 minutos y 4 peticiones por sesión;
 - Firebase Cloud Messaging es gratuito, así que no aparece en la calculadora;
 - los clientes ya inician sesión con un sistema de Lumina, y la API solo valida ese token.
+- la regulación de DataLandia permite guardar los datos en EE. UU. (regiones us-central1 y us-east1); si no, se cambia el par de regiones (§ 8);
+- las lecturas originales se conservan 5 años;
+- los medidores y concentradores guardan sus lecturas al menos 72 h si pierden conexión;
+- los plazos de la hoja de ruta suponen un equipo de plataforma de 4 a 6 personas.
 
 **Fuera de alcance:**
 
@@ -404,17 +615,11 @@ Términos de esta tabla:
 - el *front-end*, es decir, las pantallas de la app y la web, adjudicado en otra RFP;
 - el inicio de sesión de los clientes, que ya resuelve un sistema de Lumina.
 
-# Próximos pasos
-
-| Entrega | Fecha | Alcance |
-|---|---|---|
-| 2 | 7 de noviembre de 2026 | Streaming: *replay* de las lecturas reales de 2013, como si llegaran hoy, hacia Kafka y Spark Structured Streaming (picos, anomalías, medidores en silencio); DAGs de Airflow. Ya implementado; falta la corrida del DAG con Spark |
-| 3 | 20–21 de noviembre de 2026 | API en Cloud Run, mantenimiento predictivo, tablero en Looker Studio, demo de punta a punta, slides con los indicadores y la calculadora. El pronóstico D+1, las vistas OLAP y el análisis de tarifas ya están implementados |
-
 # Glosario
 
 | Término | Significado |
 |---|---|
+| Activo-activo | Estrategia en la que dos regiones atienden a la vez; si una cae, la otra sigue sin corte |
 | Acorn | Clasificación socioeconómica de hogares del Reino Unido (CACI) |
 | API | *Application Programming Interface*: la forma en que un programa pide datos o servicios a otro |
 | API REST | API web que responde en JSON a direcciones como `/hogares/123/consumo` |
@@ -428,6 +633,7 @@ Términos de esta tabla:
 | Cloud Run | Servicio de Google que corre la API y crea o apaga instancias según las peticiones |
 | *Clustering* (agrupación) | Ordenar una tabla por una columna, como el medidor, para leer menos datos |
 | Composer 3 | Airflow operado por Google |
+| Conmutación | Pasar la operación de la región principal a la secundaria (en inglés, *failover*) |
 | Concentrador | Equipo que reúne las lecturas de los medidores de un barrio y las reenvía |
 | `curated` / `rt` | Datasets de BigQuery: historia limpia hasta ayer / resultados del streaming de hoy |
 | D+1 | El día siguiente |
@@ -436,17 +642,20 @@ Términos de esta tabla:
 | Data warehouse | Base de datos analítica para consultas SQL rápidas sobre mucha historia |
 | Dataset | En BigQuery, un grupo de tablas |
 | Datos maestros | Catálogos que describen entidades y cambian poco: hogares, segmentos, calendario |
+| *Dual-region* | Datos guardados en dos regiones a la vez |
 | DCU | *Data Compute Unit*: unidad de cobro de Spark serverless (1 vCPU con 4 GB) |
 | DR (respuesta a la demanda) | *Demand response*: pedir a los clientes que bajen o muevan su consumo ante una señal de precio |
-| DRP / HA | Plan de recuperación ante desastres / alta disponibilidad |
-| *Dual-region* | Datos guardados en dos regiones a la vez |
+| DRP | *Disaster Recovery Plan*: plan de recuperación ante desastres |
 | dToU / ToU | Tarifa por franja horaria (*Time of Use*); la dinámica (dToU) fija el precio de cada media hora un día antes |
 | Firebase Cloud Messaging | Servicio gratuito de Google (parte de Firebase) que envía avisos push al celular |
+| Espera tibia | Estrategia en la que una versión pequeña del servicio corre siempre en la región secundaria y crece al conmutar (*warm standby*) |
 | GCS | *Google Cloud Storage*, el almacén de archivos de Google |
 | Grupo de control | Hogares que no recibieron el tratamiento (aquí, la tarifa dinámica) y sirven de comparación |
+| HA | *High Availability*, alta disponibilidad: el servicio sigue funcionando ante fallas comunes |
 | Hora punta | Franja de 17 a 21 h, cuando más energía se consume |
 | IAM | *Identity and Access Management*: control de quién puede hacer qué |
 | Idempotente | Una operación que, si se repite, no duplica el resultado |
+| Inmutable | Copia que nadie puede borrar ni cambiar antes de una fecha (*Bucket Lock*) |
 | IoT | *Internet of Things*: dispositivos que envían datos por sí solos |
 | Kafka / tópico | Sistema de mensajería que guarda eventos en orden; un tópico es un canal con nombre |
 | KRaft | Modo de Kafka que no necesita ZooKeeper, un servicio de coordinación adicional |
@@ -455,6 +664,7 @@ Términos de esta tabla:
 | Linaje | Trazabilidad de dónde viene cada dato y qué lo transformó |
 | MAPE / WAPE | Error porcentual medio de cada punto / error total dividido por la energía total |
 | Mantenimiento predictivo | Anticipar fallas de equipos antes de que ocurran |
+| MirrorMaker 2 | Herramienta de Kafka que copia tópicos entre clústeres |
 | Modelo estrella | Tablas de hechos (mediciones) rodeadas de tablas de dimensiones (descripciones) |
 | *Offset* | Posición de un mensaje dentro de Kafka |
 | OLAP | *Online Analytical Processing*: análisis que agrega muchos datos, como el consumo por zona y mes |
@@ -468,7 +678,13 @@ Términos de esta tabla:
 | RFP | *Request for Proposal*: la solicitud de propuestas de Lumina |
 | RPO / RTO | Datos que se pueden perder / tiempo máximo para volver a operar |
 | Serverless | Servicio que se paga solo mientras trabaja, sin servidores encendidos |
+| Región / zona | Área geográfica con centros de datos de Google / cada centro de datos independiente dentro de ella |
+| Regla 3-2-1 | Tres copias, en dos servicios distintos, una fuera de la región principal |
+| Replicar / respaldar | Copiar cada cambio en segundos (protege del hardware) / guardar una copia de un momento dado (protege de borrados y errores) |
+| Residencia de datos | Exigencia legal de guardar los datos en un país o territorio determinado |
+| *Runbook* | Procedimiento paso a paso para responder a un incidente |
 | Seudonimizar | Reemplazar un identificador por un código que no identifica a la persona |
+| *Snapshot* | Copia de una tabla tal como estaba en un momento dado |
 | Spark / Structured Streaming | Motor de procesamiento en paralelo / su modo en flujo |
 | Streaming | Procesamiento en flujo: cada dato apenas llega, en segundos |
 | *Token* | Credencial digital que prueba quién inició sesión; la API la valida en cada petición |

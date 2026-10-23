@@ -1,0 +1,58 @@
+flowchart LR
+  MED["Medidores y<br/>concentradores"]
+  APP["App de clientes"] --> LB["Balanceador<br/>global"]
+  GIT["GitHub, fuera de Google Cloud<br/>código, DAGs, infraestructura"]
+
+  subgraph P["Región principal: us-central1, Iowa"]
+    direction TB
+    K1["Kafka gestionado<br/>3 zonas, activo"]
+    S1["Spark Streaming<br/>3 nodos, activo"]
+    R1["Cloud Run · API"]
+    B1[("Bigtable<br/>clúster 1")]
+    Q1[("BigQuery<br/>curated")]
+    RAW[("Lake raw<br/>lecturas originales")]
+    A1{{"Airflow<br/>Composer"}}
+    K1 --> S1
+    R1 --> B1
+  end
+
+  subgraph D["Dual-region nam4"]
+    direction TB
+    L[("Lake silver, gold<br/>y checkpoints<br/>en ambas regiones")]
+  end
+
+  subgraph S["Región secundaria: us-east1, Carolina del Sur"]
+    direction TB
+    K2["Kafka mínimo<br/>en espera"]
+    S2["Spark Streaming<br/>1 nodo en espera"]
+    R2["Cloud Run · API<br/>escala a cero"]
+    B2[("Bigtable<br/>clúster 2")]
+    Q2[("BigQuery<br/>réplica de curated")]
+    BK[("Respaldos inmutables<br/>raw, Bigtable, snapshots")]
+    K2 --> S2
+    R2 --> B2
+  end
+
+  MED --> K1
+  MED -.->|si cae la principal| K2
+  LB --> R1
+  LB -.-> R2
+  K1 -->|MirrorMaker 2| K2
+  S1 --> L
+  L -.-> S2
+  B1 <-->|replicación| B2
+  Q1 -->|réplica| Q2
+  RAW -->|copia diaria| BK
+  GIT -.->|recrear| A1
+
+  classDef pri fill:#E8F1FB,stroke:#3B7DD8,color:#10243F
+  classDef sec fill:#FFF4E0,stroke:#D98E04,color:#3A2600
+  classDef dual fill:#EAF7EF,stroke:#2E9E5B,color:#0F2E1C
+  classDef ext fill:#EEF0F3,stroke:#5B6575,color:#1C2230
+  class K1,S1,RAW,Q1,B1,R1,A1 pri
+  class K2,S2,Q2,B2,R2,BK sec
+  class L dual
+  class MED,APP,LB,GIT ext
+  style P fill:#FAFCFF,stroke:#3B7DD8
+  style S fill:#FFFDF7,stroke:#D98E04
+  style D fill:#F7FCF9,stroke:#2E9E5B
