@@ -66,5 +66,8 @@ bash infra/teardown.sh    # al final del curso: borra todos los recursos (pide c
 
 ## Autoría
 
-Piero Palacios · Curso de Big Data, UTEC.
+Piero Palacios ([@pipaber](https://github.com/pipaber)) y Diego Sanchez Salazar ([@Diego9828](https://github.com/Diego9828)) · Curso de Big Data, UTEC.
+
+Repositorio original: [pipaber/dataenergia-lumina](https://github.com/pipaber/dataenergia-lumina).
+
 Desarrollado con asistencia de IA generativa (Claude); las decisiones técnicas y las cifras de costo deben validarse con el docente y con la calculadora de precios de GCP.
